@@ -1,0 +1,61 @@
+---
+title: "Curtailment-to-Compute: How Much Wasted Arizona Solar Could Power Flexible AI Compute?"
+author: "Working paper — Phase 0 scaffold stub"
+date: today
+abstract: >
+  [Phase 0 stub.] Arizona's balancing authorities do not publish solar
+  curtailment data, so any answer to "how much solar does Arizona waste, and
+  what could flexible compute do with it?" must be estimated. This working
+  paper will triangulate three independent estimators — a physical
+  potential-vs-actual model, a WEIM negative-price market signal, and
+  documented anchors from regulatory filings — and simulate flexible data
+  center workloads scheduled into the estimated surplus windows. The final
+  abstract will state a defensible range, not a point estimate. Nothing in
+  this stub is a result.
+---
+
+## Status of this document
+
+This is the Phase 0 pipeline stub: it exists to prove that the paper renders
+from executed code, so that every figure in the eventual working paper is
+regenerated from data at render time. No curtailment estimates appear here,
+because none have been computed — see `SPEC.md` in the replication repository
+for the estimation plan and the statistical honesty rules the analysis will be
+held to.
+
+## Pipeline proof: one data-driven figure
+
+The figure below is computed at render time: pvlib's Ineichen clear-sky model
+for Phoenix (fixed Linke turbidity = 3), written to the project's parquet +
+DuckDB store, then read back from the store and plotted. It is a physical
+illustration of Arizona's seasonal solar resource, **not** an output of the
+curtailment analysis.
+
+```{python}
+#| label: fig-phase0-clearsky
+#| fig-cap: "Clear-sky global horizontal irradiance at Phoenix, June vs. December solstice (pvlib Ineichen model, fixed Linke turbidity = 3). Phase 0 pipeline proof: computed, stored in DuckDB, and re-read from the store at render time."
+import sys
+from pathlib import Path
+
+repo_root = Path.cwd().resolve().parent
+sys.path.insert(0, str(repo_root))
+
+from IPython.display import Image
+from src.figures.fig_phase0_clearsky import build
+
+Image(filename=str(build()))
+```
+
+## What comes next
+
+1. **Fleet + actuals** — EIA-860 plant inventory; EIA-930 hourly generation
+   for AZPS, SRP, TEPC with imputed hours handled explicitly; EIA-923 monthly
+   per-plant calibration data.
+2. **Potential model** — NSRDB irradiance + pvlib per plant, calibrated on
+   clearly-unconstrained periods, validated on held-out months.
+3. **Estimators A/B/C and triangulation** — presented as a range; estimator
+   disagreement is reported, never averaged away.
+4. **Flexible-compute simulation** — scenario grid with a skeptical
+   flexibility case; utilization-vs-surplus-share tradeoff curve.
+5. **Limitations and "ways this could be wrong"** — drafted before results
+   are final.

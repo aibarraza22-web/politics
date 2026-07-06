@@ -1,0 +1,31 @@
+# secrets
+.env
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# data: everything under data/ is regenerable from `make` targets + APIs.
+# Hand-curated inputs live in src/ (e.g. src/estimators/c_anchors/), not here.
+data/**
+!data/*/
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/final/.gitkeep
+*.duckdb
+*.duckdb.wal
+
+# quarto / paper build outputs
+/.quarto/
+paper/.quarto/
+paper/_output/
+paper/figures/
+paper/*_files/
+
+# misc
+.DS_Store
+.ipynb_checkpoints/
