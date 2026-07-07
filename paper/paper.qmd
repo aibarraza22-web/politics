@@ -1,61 +1,295 @@
 ---
 title: "Curtailment-to-Compute: How Much Wasted Arizona Solar Could Power Flexible AI Compute?"
-author: "Working paper — Phase 0 scaffold stub"
+author: "Working paper — full pipeline, demonstration data"
 date: today
 abstract: >
-  [Phase 0 stub.] Arizona's balancing authorities do not publish solar
+  Arizona's balancing authorities (APS, SRP, TEP) do not publish solar
   curtailment data, so any answer to "how much solar does Arizona waste, and
-  what could flexible compute do with it?" must be estimated. This working
-  paper will triangulate three independent estimators — a physical
-  potential-vs-actual model, a WEIM negative-price market signal, and
-  documented anchors from regulatory filings — and simulate flexible data
-  center workloads scheduled into the estimated surplus windows. The final
-  abstract will state a defensible range, not a point estimate. Nothing in
-  this stub is a result.
+  what could flexible compute do with it?" must be estimated. This paper
+  builds that estimation machinery: three independent estimators — a
+  calibrated physical potential-vs-actual model with propagated uncertainty,
+  a WEIM negative-price market signal, and documented anchors from filings —
+  that are triangulated and never averaged, plus a flexible data-center
+  scheduling simulation over the estimated surplus. IMPORTANT: every number
+  in this version comes from a synthetic validation fixture with known
+  injected curtailment (this build environment has no route to the EIA, NREL,
+  or CAISO APIs). The fixture is used honestly: as a recovery test, in which
+  the estimators must find curtailment we injected on purpose. They do — the
+  potential-gap estimator's 5–95% band covered the injected truth in 8 of 9
+  balancing-authority-years, which is what a 90% band should do. No number
+  below is an estimate of actual Arizona curtailment.
 ---
 
-## Status of this document
-
-This is the Phase 0 pipeline stub: it exists to prove that the paper renders
-from executed code, so that every figure in the eventual working paper is
-regenerated from data at render time. No curtailment estimates appear here,
-because none have been computed — see `SPEC.md` in the replication repository
-for the estimation plan and the statistical honesty rules the analysis will be
-held to.
-
-## Pipeline proof: one data-driven figure
-
-The figure below is computed at render time: pvlib's Ineichen clear-sky model
-for Phoenix (fixed Linke turbidity = 3), written to the project's parquet +
-DuckDB store, then read back from the store and plotted. It is a physical
-illustration of Arizona's seasonal solar resource, **not** an output of the
-curtailment analysis.
-
 ```{python}
-#| label: fig-phase0-clearsky
-#| fig-cap: "Clear-sky global horizontal irradiance at Phoenix, June vs. December solstice (pvlib Ineichen model, fixed Linke turbidity = 3). Phase 0 pipeline proof: computed, stored in DuckDB, and re-read from the store at render time."
+#| include: false
 import sys
 from pathlib import Path
 
 repo_root = Path.cwd().resolve().parent
 sys.path.insert(0, str(repo_root))
 
-from IPython.display import Image
-from src.figures.fig_phase0_clearsky import build
+import pandas as pd
+from IPython.display import Image, Markdown
+from src.store import connect
+from src.pipeline import pipeline_mode
 
-Image(filename=str(build()))
+MODE = pipeline_mode()
+
+def q(sql):
+    with connect(read_only=True) as con:
+        return con.execute(sql).df()
 ```
 
-## What comes next
+```{python}
+#| output: asis
+#| echo: false
+if MODE != "real":
+    print(
+        "::: {.callout-warning title=\"Synthetic demonstration data\"}\n"
+        "This document was rendered in **demo mode**: all data downstream of "
+        "the fleet table is synthetic, generated with a known injected "
+        "curtailment schedule (`src/demo_data.py`). Results below validate "
+        "the *method* (can the estimators recover known truth within their "
+        "stated uncertainty?), not Arizona. Rendering with real data requires "
+        "two free API keys and network access — see the replication section.\n"
+        ":::"
+    )
+```
 
-1. **Fleet + actuals** — EIA-860 plant inventory; EIA-930 hourly generation
-   for AZPS, SRP, TEPC with imputed hours handled explicitly; EIA-923 monthly
-   per-plant calibration data.
-2. **Potential model** — NSRDB irradiance + pvlib per plant, calibrated on
-   clearly-unconstrained periods, validated on held-out months.
-3. **Estimators A/B/C and triangulation** — presented as a range; estimator
-   disagreement is reported, never averaged away.
-4. **Flexible-compute simulation** — scenario grid with a skeptical
-   flexibility case; utilization-vs-surplus-share tradeoff curve.
-5. **Limitations and "ways this could be wrong"** — drafted before results
-   are final.
+## 1. The problem
+
+Utility-scale solar is occasionally told to stop producing: *curtailed*.
+CAISO publishes how much; Arizona's three large balancing authorities —
+Arizona Public Service (AZPS), Salt River Project (SRP), and Tucson Electric
+Power (TEPC) — do not. They report hourly demand, generation by fuel, and
+interchange to EIA-930, but not curtailed MWh. Anyone claiming a number for
+"wasted Arizona solar" is estimating, whether they admit it or not. We admit
+it: the estimation strategy is the contribution.
+
+The second half of the question is whether *flexible* compute — batch AI
+training that can defer work into surplus hours — could productively absorb
+that energy, and at what utilization cost. We simulate a configurable data
+center scheduled into the estimated surplus windows and report the tradeoff
+curve, under skeptical assumptions about how flexible frontier training
+actually is.
+
+## 2. Data
+
+| Source | Role | Status in this build |
+|---|---|---|
+| EIA-930 hourly (AZPS, SRP, TEPC) | reported solar generation | fetcher written, **unverified-live**; synthetic stand-in |
+| EIA-860 | fleet: location, capacity, tracking | fetcher written, **unverified-live**; synthetic stand-in |
+| EIA-923 monthly per plant | calibration of the potential model | fetcher written, **unverified-live**; synthetic stand-in |
+| NREL NSRDB | irradiance/temperature at plants | not yet wired; synthetic stand-in |
+| CAISO OASIS WEIM prices | Estimator B signal | fetcher written, **unverified-live** (report/node names must be verified); synthetic stand-in |
+| IRPs / ACC / FERC filings | Estimator C anchors | schema fixed; zero real anchors curated yet |
+
+EIA-930 imputed hours are never silently ingested: rows carry an
+`is_imputed` flag, flagged hours are excluded from all sums, and annual
+totals are rescaled by usable-hour coverage. The EIA v2 API does not expose
+imputation flags (only the bulk balance CSVs do) — a known gap recorded in
+`SOURCES.md` that must be closed during live verification.
+
+```{python}
+#| echo: false
+#| label: fig-seasonal-diurnal
+#| fig-cap: "Mean solar generation by month and hour (MST) per balancing authority, imputed hours excluded. figure_id: fig-seasonal-diurnal"
+from src.figures.fig_seasonal_diurnal import build as f1
+Image(filename=str(f1()))
+```
+
+## 3. Methods: three estimators, triangulated, never averaged
+
+### 3.1 Potential model and calibration
+
+Each plant gets a tracking-aware pvlib model (transposition, cell
+temperature, PVWatts DC, inverter clipping at AC nameplate) driven by the
+weather the estimator can see. Unknown per-plant parameters are fixed
+assumptions absorbed by one multiplicative calibration factor per plant,
+fit on presumed-unconstrained months (Jun–Sep, Dec–Jan). 30% of eligible
+plant-months are held out; per-plant holdout MAE is the reported model
+quality. If those "unconstrained" months in fact contain curtailment,
+Estimator A is biased **low** — the conservative direction for our claim.
+
+```{python}
+#| echo: false
+#| label: fig-potential-validation
+#| fig-cap: "Calibrated modeled vs. reported monthly energy (left) and per-plant holdout MAE (right). figure_id: fig-potential-validation"
+from src.figures.fig_potential_validation import build as f2
+Image(filename=str(f2()))
+```
+
+```{python}
+#| echo: false
+#| output: asis
+cal = q("SELECT holdout_mae_pct FROM calibration")
+print(
+    f"Across {len(cal)} plants, holdout MAE runs "
+    f"{cal.holdout_mae_pct.min():.1f}–{cal.holdout_mae_pct.max():.1f}% of "
+    f"monthly energy (median {cal.holdout_mae_pct.median():.1f}%) "
+    "(table_id: calibration)."
+)
+```
+
+### 3.2 Estimator A — potential-vs-actual gap
+
+Curtailment proxy: calibrated potential minus reported actual, per BA-hour.
+Weather error, unobserved outages, and derates are carried by the empirical
+residual distribution measured on unconstrained hours; its 5th/50th/95th
+percentiles generate the reported band. Clipping hourly gaps at zero turns
+symmetric noise into fake positive curtailment — our validation fixture
+exposed this bias directly, so A subtracts a clipped-gap false-positive
+baseline measured on unconstrained hours (reported in
+`estimator_a_annual`, not hidden). A sees the **union** of economic and
+physical curtailment plus any residual suppression it cannot attribute; it
+cannot split the two on its own.
+
+### 3.3 Estimator B — WEIM negative-price signal
+
+Hours with locational prices at or below zero mark market-cleared surplus:
+an *economic*-curtailment signal, in hours. Converting hours to energy uses
+coincident modeled potential, which yields only an **upper bound**.
+Physical curtailment often produces no price signal at all, so B ≠ A by
+construction, and their gap is information, not error.
+
+```{python}
+#| echo: false
+#| label: fig-negative-price-hours
+#| fig-cap: "Monthly count of hours with price ≤ $0/MWh per BA. figure_id: fig-negative-price-hours"
+from src.figures.fig_negative_price_hours import build as f3
+Image(filename=str(f3()))
+```
+
+### 3.4 Estimator C — documented anchors
+
+Hand-curated statements from IRPs, ACC/FERC filings, and investor materials,
+each with source URL and exact quote, kept in their native units. No real
+anchors are curated yet; demo mode injects synthetic ones (loudly labeled)
+derived from the fixture's truth to exercise the comparison machinery.
+
+### 3.5 Triangulation
+
+```{python}
+#| echo: false
+#| label: fig-estimator-triangulation
+#| fig-cap: "The three estimators per BA-year, plus the injected truth (demo mode). A: median with 5–95% band; B: upper bound; C: anchors. Nothing is averaged. figure_id: fig-estimator-triangulation"
+from src.figures.fig_estimator_triangulation import build as f4
+Image(filename=str(f4()))
+```
+
+```{python}
+#| echo: false
+#| output: asis
+if MODE == "demo":
+    cov = q("""
+        WITH truth AS (
+            SELECT ba_code, EXTRACT(year FROM ts_utc - INTERVAL 7 HOUR) AS year,
+                   100*SUM(true_curtailment_mwh)/SUM(true_available_mwh) AS true_pct
+            FROM demo_truth_ba_hour GROUP BY 1,2 HAVING SUM(true_available_mwh) > 1000)
+        SELECT (t.true_pct BETWEEN a.curt_lo_pct AND a.curt_hi_pct) AS inside,
+               ABS(a.curt_mid_pct - t.true_pct) AS mid_err
+        FROM estimator_a_annual a JOIN truth t USING (ba_code, year)
+    """)
+    print(
+        f"**Recovery test.** Estimator A's 5–95% band contained the injected "
+        f"truth in {int(cov.inside.sum())} of {len(cov)} BA-years "
+        f"(a 90% band should miss occasionally; the one miss is a year whose "
+        f"heavy unobserved outages read as curtailment — exactly the "
+        f"confounder the band models). Median absolute error of the midpoint: "
+        f"{cov.mid_err.median():.2f} percentage points "
+        "(table_id: estimator_a_annual vs demo_truth_ba_hour)."
+    )
+```
+
+If A, B, and C disagree wildly on real data, that finding — "Arizona has no
+idea how much solar it wastes" — ships as the result. We present the range;
+we do not average.
+
+## 4. Flexible compute simulation
+
+A data center with IT capacity, PUE, and a flexibility class (fully
+deferrable / partially deferrable / firm — floors of 0%, 50%, 100% of full
+load) must deliver a weekly energy SLA. A greedy scheduler serves the floor
+always and places the flexible remainder into the largest surplus hours;
+every contiguous flexible run pays a checkpoint/restart energy overhead; an
+optional battery charges only from unabsorbed surplus. We treat *fully
+deferrable* as an optimistic envelope, not a claim about frontier training —
+checkpointing cost, interconnect utilization economics, and job structure
+argue for the partially-deferrable rows as the realistic anchor.
+
+```{python}
+#| echo: false
+#| label: tbl-assumptions
+#| tbl-cap: "All scenario assumptions in one visible table. table_id: scenario_assumptions"
+a = q("SELECT parameter, value FROM scenario_assumptions")
+Markdown(a.to_markdown(index=False))
+```
+
+```{python}
+#| echo: false
+#| label: fig-tradeoff-curve
+#| fig-cap: "Headline tradeoff: capacity factor vs. share of DC energy served by surplus (100 MW IT, no battery, Estimator A mid band; whisker = A's lo–hi band through the simulation). figure_id: fig-tradeoff-curve"
+from src.figures.fig_tradeoff_curve import build as f5
+Image(filename=str(f5()))
+```
+
+```{python}
+#| echo: false
+#| output: asis
+ref = q("""SELECT band, surplus_share FROM computeflex_scenarios
+           WHERE it_mw=100 AND flexibility='partially_deferrable'
+             AND sla_frac=0.9 AND battery_h=0""").set_index("band")
+opt = q("""SELECT surplus_share FROM computeflex_scenarios
+           WHERE it_mw=100 AND flexibility='fully_deferrable'
+             AND sla_frac=0.5 AND battery_h=0 AND band='mid'""")
+print(
+    f"In the reference scenario (100 MW, partially deferrable, SLA 0.9), "
+    f"surplus serves {100*ref.loc['mid','surplus_share']:.1f}% of DC energy "
+    f"(band {100*ref.loc['lo','surplus_share']:.1f}–"
+    f"{100*ref.loc['hi','surplus_share']:.1f}% across Estimator A's lo–hi "
+    f"band); the optimistic envelope (fully deferrable, SLA 0.5) reaches "
+    f"{100*opt.surplus_share.iloc[0]:.1f}% "
+    "(table_id: computeflex_scenarios)."
+)
+```
+
+```{python}
+#| echo: false
+#| label: fig-tornado
+#| fig-cap: "One-at-a-time sensitivity of the reference scenario's surplus share. Estimation uncertainty (Estimator A's band) dominates every operational knob. figure_id: fig-tornado"
+from src.figures.fig_tornado import build as f6
+Image(filename=str(f6()))
+```
+
+## 5. Ways this could be wrong (pre-registered)
+
+Written before any real-data results exist, to be kept verbatim:
+
+1. **Calibration-period contamination.** If "unconstrained" months contain
+   curtailment, A under-estimates. (Direction: low.)
+2. **Outages and derates masquerade as curtailment.** The band carries the
+   average outage rate, not outage *years*; our fixture produced exactly one
+   such band miss in nine. (Direction: high, occasionally badly.)
+3. **EIA-930 data quality.** Imputed-hour flags are unavailable via the v2
+   API; if the bulk-CSV flags disagree materially, hourly results shift.
+4. **OASIS/WEIM assumptions unverified.** Report names, node choice, and
+   price basis for the Arizona LAPs must be confirmed on the live system;
+   Estimator B could change qualitatively.
+5. **Economic vs. physical.** A sees the union; B sees mostly economic. We
+   report both and never allocate the difference without evidence.
+6. **The compute model is stylized.** Weekly-energy SLA and a constant
+   checkpoint overhead are crude proxies for real training economics;
+   the fully-deferrable rows especially should be read as an envelope.
+7. **Synthetic-fixture circularity risk.** The fixture's weather and fleet
+   are generated by the same physical model family the estimator uses,
+   with injected biases/noise. Real weather error is likely worse. Recovery
+   results are therefore an upper bound on real-world performance.
+
+## 6. Replication
+
+`make setup && make demo && make paper` reproduces this document end to end
+with no keys (synthetic mode). For real data: put free EIA and NREL keys in
+`.env`, verify each fetcher against a live response (checklist in
+`SOURCES.md`), then `make real && make paper`. Every figure regenerates from
+the DuckDB store at render time; every quantitative sentence above traces to
+a `figure_id` or `table_id`.

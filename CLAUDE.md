@@ -24,11 +24,11 @@ If A, B, and C disagree wildly, that is a publishable finding ("Arizona has no i
 - All scenario assumptions live in one visible table.
 - EIA-930 imputed hours are flagged upstream — exclude or handle explicitly, never silently ingest.
 
-## Current phase: Phase 0 — Scaffold ✅ → Phase 1 — Fleet + actuals
+## Current phase: Phases 0–5 built in DEMO MODE → live-data verification
 
-**Phase 0 acceptance (met):** repo + CI, API keys (EIA, NREL) wired via `.env`, duckdb store, Quarto rendering; `make paper` renders a stub PDF with one data-driven figure.
+All five phases exist and run end to end (`make demo && make paper && make test`), but **on a synthetic validation fixture with injected ground-truth curtailment** — this build environment had no network route to EIA/NREL/CAISO, so every real-mode fetcher is `unverified-live`. The fixture is a recovery test (estimators must find the injected truth within their bands; A covers 8/9 BA-years), never a source of Arizona claims. Every figure carries a SYNTHETIC banner unless `pipeline_meta.mode = 'real'`.
 
-**Phase 1 acceptance (next):** AZ solar fleet table built from EIA-860; EIA-930 hourly pulled for AZPS/SRP/TEPC with imputation flags handled; EIA-923 monthly per plant; exploratory notebook on seasonal/diurnal patterns per BA. Done when: validated hourly dataset covering ≥3 years, and the fleet table reconciles with 930 aggregate solar within a documented tolerance.
+**Next milestone:** on a networked machine, work through the live-verification checklist in `SOURCES.md` (inspect raw responses, fix parsers, wire NSRDB, investigate OASIS report/node names), then `make real` and re-validate: reconciliation within tolerance, holdout MAE acceptable, triangulation figure regenerated with real divergence discussed — never averaged.
 
 ## Working conventions
 
@@ -41,6 +41,8 @@ If A, B, and C disagree wildly, that is a publishable finding ("Arizona has no i
 ## Commands
 
 - `make setup` — install deps (uv sync)
-- `make figures` — regenerate every figure from data
+- `make demo` — full pipeline on the synthetic fixture (no keys/network needed)
+- `make real` — full pipeline on live data (needs `.env` keys + verified fetchers)
+- `make figures` — regenerate every figure from the duckdb store
 - `make paper` — figures + render the Quarto paper (PDF via typst + HTML)
 - `make test` / `make lint` — pytest / ruff

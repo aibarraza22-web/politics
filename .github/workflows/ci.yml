@@ -19,7 +19,10 @@ jobs:
       - name: Lint
         run: uv run ruff check src tests
 
-      - name: Tests
+      - name: Build demo pipeline (synthetic fixture + estimators)
+        run: make demo
+
+      - name: Tests (includes ground-truth recovery test)
         run: uv run pytest -q
 
   paper:
@@ -38,13 +41,17 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Build demo pipeline
+        run: make demo
+
       - name: Render paper (PDF + HTML)
         run: make paper
 
-      - name: Upload rendered paper
+      - name: Upload rendered paper + explorer
         uses: actions/upload-artifact@v4
         with:
-          name: paper
+          name: paper-and-explorer
           path: |
             paper/_output/paper.pdf
             paper/_output/paper.html
+            explorer/

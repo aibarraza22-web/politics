@@ -26,6 +26,9 @@ paper/_output/
 paper/figures/
 paper/*_files/
 
+# generated explorer dataset (regenerate via `make demo` / `make real`)
+explorer/data.js
+
 # misc
 .DS_Store
 .ipynb_checkpoints/

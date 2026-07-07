@@ -19,3 +19,13 @@ Status legend: `unverified` = not yet accessed from this codebase · `verified` 
 *(Append dated notes here as each source is verified: exact endpoints used, response schema surprises, imputation-flag semantics, rate limits observed, node names found, etc.)*
 
 - **2026-07-06 (Phase 0):** Log created. No external data sources accessed yet — the Phase 0 stub figure uses pvlib's clear-sky model (local computation, no API). Verification of eia930/eia860/eia923/nsrdb happens at the start of Phase 1/2; oasis at Phase 3.
+- **2026-07-07 (Phases 1–5, demo build):** This build environment's network policy blocks every data host (www.eia.gov, api.eia.gov, developer.nrel.gov, oasis.caiso.com, even power.larc.nasa.gov all return proxy 403). Consequence: **all fetchers are written against documented schemas but remain `unverified-live`**, and the pipeline ships in demo mode on a synthetic fixture with injected ground truth (`src/demo_data.py`). This violates the "inspect real responses before writing parsers" rule out of necessity, so the rule converts into the checklist below — none of the real-mode fetchers may be trusted until it is done.
+
+### Live-verification checklist (do on a networked machine, before `make real`)
+
+1. **eia930** (`src/fleet/eia930.py`): pull one day for AZPS; eyeball raw JSON. Confirm route `electricity/rto/fuel-type-data`, field names (`respondent`, `fueltype`, `period`, `value`), units, and timezone of `period`. Resolve the imputation-flag gap: the v2 API exposes no flags — add the Grid Monitor bulk balance CSV path (which has them) or document why not.
+2. **eia860** (`src/fleet/eia860.py`): download one vintage; diff the actual sheet + column names against the parser (`2___Plant_Y*`, `3_3_Solar_Y*`, "DC Net Capacity (MW)", tracking columns — EIA renames between vintages).
+3. **eia923** (`src/fleet/eia923.py`): confirm route `electricity/facility-fuel`, facet names (`state`, `fuel2002`), and that monthly `generation` is net MWh.
+4. **nsrdb**: not yet wired (demo weather stands in). Wire PSM v3 hourly at plant coordinates, cache per plant-year to parquet, respect rate limits.
+5. **oasis** (`src/estimators/b_eim_prices.py`): investigate the correct WEIM report (`PRC_INTVL_LMP` is a guess) and the Arizona LAP/node names; record findings here. SPEC.md explicitly says do not trust the spec on this.
+6. After each item: update the table above (status, dates) and re-run `make real && make test`.
