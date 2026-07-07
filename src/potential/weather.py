@@ -37,21 +37,26 @@ def fetch_open_meteo(
     cache = RAW_DIR / "weather_openmeteo" / f"{plant_id}_{start}_{end}.parquet"
     if cache.exists():
         return pd.read_parquet(cache)
-    for attempt in range(6):
-        resp = requests.get(
-            OPEN_METEO_URL,
-            params={
-                "latitude": round(lat, 4),
-                "longitude": round(lon, 4),
-                "start_date": start,
-                "end_date": end,
-                "hourly": HOURLY_VARS,
-                "timezone": "UTC",
-            },
-            timeout=300,
-        )
+    for attempt in range(10):
+        try:
+            resp = requests.get(
+                OPEN_METEO_URL,
+                params={
+                    "latitude": round(lat, 4),
+                    "longitude": round(lon, 4),
+                    "start_date": start,
+                    "end_date": end,
+                    "hourly": HOURLY_VARS,
+                    "timezone": "UTC",
+                },
+                timeout=120,
+            )
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+            # volume throttling often shows up as a hung connection
+            time.sleep(60 * (attempt + 1))
+            continue
         if resp.status_code == 429:
-            time.sleep(10 * (attempt + 1))
+            time.sleep(60 * (attempt + 1))
             continue
         resp.raise_for_status()
         h = resp.json()["hourly"]
@@ -69,7 +74,7 @@ def fetch_open_meteo(
         df[["ghi", "dni", "dhi"]] = df[["ghi", "dni", "dhi"]].clip(lower=0)
         cache.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(cache, index=False)
-        time.sleep(0.4)
+        time.sleep(1.5)
         return df
     raise RuntimeError(f"Open-Meteo kept rate-limiting plant {plant_id}")
 
