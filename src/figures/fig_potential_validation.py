@@ -23,9 +23,16 @@ def build(figures_dir=None):
         val = con.execute(
             "SELECT * FROM potential_monthly_validation WHERE eligible"
         ).df()
+        # Right panel: the largest plants by capacity (a real fleet has ~90
+        # plants; the scatter carries the full fleet).
         cal = con.execute(
-            "SELECT * FROM calibration ORDER BY holdout_mae_pct DESC"
-        ).df()
+            """
+            SELECT c.*, f.capacity_mw_ac FROM calibration c
+            JOIN fleet f USING (plant_id)
+            WHERE c.holdout_mae_pct IS NOT NULL
+            ORDER BY f.capacity_mw_ac DESC LIMIT 15
+            """
+        ).df().sort_values("holdout_mae_pct", ascending=False)
 
     fig, (ax, ax2) = plt.subplots(
         1, 2, figsize=(9.5, 4.2), dpi=200, gridspec_kw={"width_ratios": [1.4, 1]}
@@ -54,7 +61,7 @@ def build(figures_dir=None):
     ax2.barh(y, cal["holdout_mae_pct"], height=0.6, color=SERIES[0])
     ax2.set_yticks(y, [str(int(p)) for p in cal["plant_id"]], fontsize=8)
     ax2.set_xlabel("Holdout MAE (% of monthly energy)", color=INK_2)
-    ax2.set_ylabel("Plant", color=INK_2)
+    ax2.set_ylabel("Plant (15 largest by capacity)", color=INK_2)
     for yi, v in zip(y, cal["holdout_mae_pct"], strict=True):
         ax2.text(v + 0.05, yi, f"{v:.1f}%", va="center", fontsize=8, color=INK)
     ax2.grid(axis="x", color="#e6e5e0", linewidth=0.8)

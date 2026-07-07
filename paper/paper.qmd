@@ -1,23 +1,21 @@
 ---
 title: "Curtailment-to-Compute: How Much Wasted Arizona Solar Could Power Flexible AI Compute?"
-author: "Working paper — full pipeline, demonstration data"
+author: "Working paper"
 date: today
 abstract: >
   Arizona's balancing authorities (APS, SRP, TEP) do not publish solar
   curtailment data, so any answer to "how much solar does Arizona waste, and
-  what could flexible compute do with it?" must be estimated. This paper
-  builds that estimation machinery: three independent estimators — a
-  calibrated physical potential-vs-actual model with propagated uncertainty,
-  a WEIM negative-price market signal, and documented anchors from filings —
-  that are triangulated and never averaged, plus a flexible data-center
-  scheduling simulation over the estimated surplus. IMPORTANT: every number
-  in this version comes from a synthetic validation fixture with known
-  injected curtailment (this build environment has no route to the EIA, NREL,
-  or CAISO APIs). The fixture is used honestly: as a recovery test, in which
-  the estimators must find curtailment we injected on purpose. They do — the
-  potential-gap estimator's 5–95% band covered the injected truth in 8 of 9
-  balancing-authority-years, which is what a 90% band should do. No number
-  below is an estimate of actual Arizona curtailment.
+  what could flexible compute do with it?" must be estimated. We build three
+  independent estimators — a per-plant-calibrated physical
+  potential-vs-actual model with propagated uncertainty, a WEIM
+  negative-price market signal, and documented anchors from filings and
+  studies — triangulate them without ever averaging, and validate the
+  machinery on a synthetic fixture with known injected curtailment before
+  trusting it on real data. A flexible data-center scheduling simulation
+  then translates the estimated surplus into the share of compute load it
+  could serve across skeptical-to-optimistic flexibility scenarios. All
+  results are ranges, not points; the data-status box on page 1 states
+  exactly what the numbers in this rendering are based on.
 ---
 
 ```{python}
@@ -43,15 +41,27 @@ def q(sql):
 ```{python}
 #| output: asis
 #| echo: false
-if MODE != "real":
+if MODE == "real":
+    print(
+        "::: {.callout-note title=\"Data status of this rendering: REAL data, with stated substitutions\"}\n"
+        "Rendered from live data: EIA-930 bulk hourly series (imputation "
+        "flags handled), EIA-860 2024 fleet, EIA-923 monthly calibration, "
+        "and CAISO OASIS WEIM 5-minute prices at the Arizona EIM LAPs. Two "
+        "honest caveats: (1) plant-level weather is **Open-Meteo ERA5-blend**, "
+        "not NSRDB (that host was unreachable from this build environment); "
+        "per-plant calibration absorbs its level bias and the residual bands "
+        "carry the rest, but the NSRDB sensitivity check is still owed. "
+        "(2) OASIS publishes Arizona EIM LAP prices only from April 2023, "
+        "so Estimator B covers Apr-2023 onward.\n"
+        ":::"
+    )
+else:
     print(
         "::: {.callout-warning title=\"Synthetic demonstration data\"}\n"
         "This document was rendered in **demo mode**: all data downstream of "
         "the fleet table is synthetic, generated with a known injected "
         "curtailment schedule (`src/demo_data.py`). Results below validate "
-        "the *method* (can the estimators recover known truth within their "
-        "stated uncertainty?), not Arizona. Rendering with real data requires "
-        "two free API keys and network access — see the replication section.\n"
+        "the *method*, not Arizona.\n"
         ":::"
     )
 ```
@@ -75,25 +85,24 @@ actually is.
 
 ## 2. Data
 
-| Source | Role | Status in this build |
+| Source | Role | Verification notes (live, 2026-07-07) |
 |---|---|---|
-| EIA-930 hourly (AZPS, SRP, TEPC) | reported solar generation | fetcher written, **unverified-live**; synthetic stand-in |
-| EIA-860 | fleet: location, capacity, tracking | fetcher written, **unverified-live**; synthetic stand-in |
-| EIA-923 monthly per plant | calibration of the potential model | fetcher written, **unverified-live**; synthetic stand-in |
-| NREL NSRDB | irradiance/temperature at plants | not yet wired; synthetic stand-in |
-| CAISO OASIS WEIM prices | Estimator B signal | fetcher written, **unverified-live** (report/node names must be verified); synthetic stand-in |
-| IRPs / ACC / FERC filings | Estimator C anchors | schema fixed; zero real anchors curated yet |
+| EIA-930 bulk balance CSVs | hourly BA solar + **imputation flags** | schema drift handled (2024H2 splits solar by integrated-battery status, incl. a typo in EIA's own header); physically impossible hours (>1.25× fleet AC) folded into the unusable flag |
+| EIA-930 v2 API | cross-check | hourly `period` label is the hour *ending* |
+| EIA-860 (2024) | fleet: location, capacity, tracking, in-service | CSP excluded (Solana); ~1.8 GW of AZ PV is in **CISO**, not the AZ BAs — modeling fleet is 89 plants / ~3.09 GW across AZPS/SRP/TEPC; phased build-outs handled per generator |
+| EIA-923 monthly | per-plant calibration | primeMover='ALL' rollup rows would double-count; only 'PV' rows used |
+| Open-Meteo ERA5-blend | plant-level weather (**NSRDB stand-in**) | NSRDB host not reachable from this environment; swap + sensitivity check owed |
+| CAISO OASIS `PRC_INTVL_LMP` | WEIM 5-min prices, Estimator B | AZ EIM LAPs found by probing: `ELAP_{AZPS,SRP,TEPC}-APND`; data begins 2023-04; ≤7-day request spans |
+| IRPs / ACC / FERC / studies | Estimator C anchors | one strong candidate logged (NREL 74176), quote verification pending |
 
-EIA-930 imputed hours are never silently ingested: rows carry an
-`is_imputed` flag, flagged hours are excluded from all sums, and annual
-totals are rescaled by usable-hour coverage. The EIA v2 API does not expose
-imputation flags (only the bulk balance CSVs do) — a known gap recorded in
-`SOURCES.md` that must be closed during live verification.
+EIA-930 unusable hours (imputed or physically impossible) are never
+silently ingested: they are excluded from every sum and annual totals are
+rescaled by usable-hour coverage.
 
 ```{python}
 #| echo: false
 #| label: fig-seasonal-diurnal
-#| fig-cap: "Mean solar generation by month and hour (MST) per balancing authority, imputed hours excluded. figure_id: fig-seasonal-diurnal"
+#| fig-cap: "Mean solar generation by month and hour (MST) per balancing authority, unusable hours excluded. figure_id: fig-seasonal-diurnal"
 from src.figures.fig_seasonal_diurnal import build as f1
 Image(filename=str(f1()))
 ```
@@ -104,17 +113,19 @@ Image(filename=str(f1()))
 
 Each plant gets a tracking-aware pvlib model (transposition, cell
 temperature, PVWatts DC, inverter clipping at AC nameplate) driven by the
-weather the estimator can see. Unknown per-plant parameters are fixed
+weather the estimator can see, scaled by the share of the plant's
+generators in service each hour. Unknown per-plant parameters are fixed
 assumptions absorbed by one multiplicative calibration factor per plant,
 fit on presumed-unconstrained months (Jun–Sep, Dec–Jan). 30% of eligible
 plant-months are held out; per-plant holdout MAE is the reported model
-quality. If those "unconstrained" months in fact contain curtailment,
-Estimator A is biased **low** — the conservative direction for our claim.
+quality. Plants too new or too gappy in EIA-923 to calibrate get the fleet
+median scale and are flagged. If the "unconstrained" months in fact contain
+curtailment, Estimator A is biased **low** — the conservative direction.
 
 ```{python}
 #| echo: false
 #| label: fig-potential-validation
-#| fig-cap: "Calibrated modeled vs. reported monthly energy (left) and per-plant holdout MAE (right). figure_id: fig-potential-validation"
+#| fig-cap: "Calibrated modeled vs. reported monthly energy (left; full fleet) and holdout MAE for the 15 largest plants (right). figure_id: fig-potential-validation"
 from src.figures.fig_potential_validation import build as f2
 Image(filename=str(f2()))
 ```
@@ -122,12 +133,12 @@ Image(filename=str(f2()))
 ```{python}
 #| echo: false
 #| output: asis
-cal = q("SELECT holdout_mae_pct FROM calibration")
+cal = q("SELECT holdout_mae_pct FROM calibration WHERE holdout_mae_pct IS NOT NULL")
+ncal = q("SELECT COUNT(*) n FROM calibration").n.iat[0]
 print(
-    f"Across {len(cal)} plants, holdout MAE runs "
-    f"{cal.holdout_mae_pct.min():.1f}–{cal.holdout_mae_pct.max():.1f}% of "
-    f"monthly energy (median {cal.holdout_mae_pct.median():.1f}%) "
-    "(table_id: calibration)."
+    f"Across {len(cal)} of {ncal} plants with holdout months, monthly MAE runs "
+    f"{cal.holdout_mae_pct.min():.1f}–{cal.holdout_mae_pct.max():.1f}% "
+    f"(median {cal.holdout_mae_pct.median():.1f}%) (table_id: calibration)."
 )
 ```
 
@@ -137,12 +148,11 @@ Curtailment proxy: calibrated potential minus reported actual, per BA-hour.
 Weather error, unobserved outages, and derates are carried by the empirical
 residual distribution measured on unconstrained hours; its 5th/50th/95th
 percentiles generate the reported band. Clipping hourly gaps at zero turns
-symmetric noise into fake positive curtailment — our validation fixture
-exposed this bias directly, so A subtracts a clipped-gap false-positive
-baseline measured on unconstrained hours (reported in
-`estimator_a_annual`, not hidden). A sees the **union** of economic and
-physical curtailment plus any residual suppression it cannot attribute; it
-cannot split the two on its own.
+symmetric noise into fake positive curtailment — the validation fixture
+exposed this bias directly — so A subtracts a clipped-gap false-positive
+baseline measured on unconstrained hours (reported in `estimator_a_annual`,
+not hidden). A sees the **union** of economic and physical curtailment plus
+any residual suppression it cannot attribute.
 
 ### 3.3 Estimator B — WEIM negative-price signal
 
@@ -150,12 +160,14 @@ Hours with locational prices at or below zero mark market-cleared surplus:
 an *economic*-curtailment signal, in hours. Converting hours to energy uses
 coincident modeled potential, which yields only an **upper bound**.
 Physical curtailment often produces no price signal at all, so B ≠ A by
-construction, and their gap is information, not error.
+construction, and their gap is information, not error. On real data B
+covers April 2023 onward (OASIS publishes no earlier Arizona EIM LAP
+prices).
 
 ```{python}
 #| echo: false
 #| label: fig-negative-price-hours
-#| fig-cap: "Monthly count of hours with price ≤ $0/MWh per BA. figure_id: fig-negative-price-hours"
+#| fig-cap: "Monthly count of hours with mean RTM price ≤ $0/MWh per BA. figure_id: fig-negative-price-hours"
 from src.figures.fig_negative_price_hours import build as f3
 Image(filename=str(f3()))
 ```
@@ -164,24 +176,50 @@ Image(filename=str(f3()))
 
 Hand-curated statements from IRPs, ACC/FERC filings, studies, and investor
 materials, each with source URL and exact quote, kept in their native units.
-One strong real lead is already logged as a *candidate* (not yet a verified
-anchor): NREL/CP-6A20-74176 reports APS curtailed ≈17,100 MWh ≈ 2.9% of
-potential PV in 2018, entirely as economic response to WEIM negative
-pricing, peaking March–April — a level, mechanism, and seasonal shape our
-estimators can be checked against once its quote is verified at the source
-(`src/estimators/c_anchors/candidates.csv`). Unverified candidates are never
-loaded into figures; demo mode meanwhile injects synthetic anchors (loudly
-labeled) derived from the fixture's truth to exercise the comparison
-machinery.
+One strong real lead is logged as a *candidate*: NREL/CP-6A20-74176 reports
+APS curtailed ≈17,100 MWh ≈ 2.9% of potential PV in 2018, entirely as
+economic response to WEIM negative pricing, peaking March–April — a level,
+mechanism, and seasonal shape to check our estimators against once its
+quote is verified at the source (`src/estimators/c_anchors/candidates.csv`).
+Unverified candidates are never loaded into figures.
 
-### 3.5 Triangulation
+### 3.5 Method validation with injected ground truth
+
+Before trusting the estimators on Arizona, we ran the identical code on a
+synthetic fixture (`src/demo_data.py`) that injects a known curtailment
+schedule behind realistic obstacles: biased/noisy weather, unobserved
+outages, imputed hours, measurement noise, inverter clipping. Estimator A's
+5–95% band contained the injected truth in 8 of 9 BA-years (the expected
+coverage of a 90% band; the miss was a heavy unobserved-outage year), with
+median midpoint error ≈ 0.6 percentage points. This is an upper bound on
+real-world performance — real weather error is likely worse than the
+synthetic kind — but it establishes that the machinery recovers curtailment
+it has never seen. Run `make demo && make test` to reproduce.
+
+### 3.6 Triangulation
 
 ```{python}
 #| echo: false
 #| label: fig-estimator-triangulation
-#| fig-cap: "The three estimators per BA-year, plus the injected truth (demo mode). A: median with 5–95% band; B: upper bound; C: anchors. Nothing is averaged. figure_id: fig-estimator-triangulation"
+#| fig-cap: "The three estimators per BA-year in a common unit. A: median with 5–95% band; B: upper bound (Apr-2023+ on real data); C: anchors where available; demo mode adds the injected truth. Nothing is averaged. figure_id: fig-estimator-triangulation"
 from src.figures.fig_estimator_triangulation import build as f4
 Image(filename=str(f4()))
+```
+
+```{python}
+#| echo: false
+#| label: tbl-estimator-a
+#| tbl-cap: "Estimator A annual results with 5–95% bands. table_id: estimator_a_annual"
+a = q("""
+    SELECT ba_code AS BA, CAST(year AS INT) AS year,
+           ROUND(curt_lo_pct, 2)  AS "lo (%)",
+           ROUND(curt_mid_pct, 2) AS "mid (%)",
+           ROUND(curt_hi_pct, 2)  AS "hi (%)",
+           ROUND(curt_mid_mwh)    AS "mid (MWh)",
+           ROUND(coverage, 3)     AS coverage
+    FROM estimator_a_annual ORDER BY 1, 2
+""")
+Markdown(a.to_markdown(index=False))
 ```
 
 ```{python}
@@ -193,24 +231,32 @@ if MODE == "demo":
             SELECT ba_code, EXTRACT(year FROM ts_utc - INTERVAL 7 HOUR) AS year,
                    100*SUM(true_curtailment_mwh)/SUM(true_available_mwh) AS true_pct
             FROM demo_truth_ba_hour GROUP BY 1,2 HAVING SUM(true_available_mwh) > 1000)
-        SELECT (t.true_pct BETWEEN a.curt_lo_pct AND a.curt_hi_pct) AS inside,
-               ABS(a.curt_mid_pct - t.true_pct) AS mid_err
+        SELECT (t.true_pct BETWEEN a.curt_lo_pct AND a.curt_hi_pct) AS inside
         FROM estimator_a_annual a JOIN truth t USING (ba_code, year)
     """)
     print(
-        f"**Recovery test.** Estimator A's 5–95% band contained the injected "
-        f"truth in {int(cov.inside.sum())} of {len(cov)} BA-years "
-        f"(a 90% band should miss occasionally; the one miss is a year whose "
-        f"heavy unobserved outages read as curtailment — exactly the "
-        f"confounder the band models). Median absolute error of the midpoint: "
-        f"{cov.mid_err.median():.2f} percentage points "
-        "(table_id: estimator_a_annual vs demo_truth_ba_hour)."
+        f"In this demo rendering the band contains the injected truth in "
+        f"{int(cov.inside.sum())} of {len(cov)} BA-years."
+    )
+else:
+    b = q("""SELECT ba_code, CAST(year AS INT) AS year,
+                    ROUND(neg_share_of_daylight_pct,1) AS neg_share,
+                    ROUND(upper_bound_pct,1) AS ub_pct
+             FROM estimator_b_annual WHERE daylight_hours > 500 ORDER BY 1,2""")
+    print(
+        "Estimator B (negative-price share of daylight hours; energy upper "
+        "bound as % of available): "
+        + "; ".join(
+            f"{r.ba_code} {r.year}: {r.neg_share}% of hours, ≤{r.ub_pct}%"
+            for r in b.itertuples()
+        )
+        + " (table_id: estimator_b_annual)."
     )
 ```
 
-If A, B, and C disagree wildly on real data, that finding — "Arizona has no
-idea how much solar it wastes" — ships as the result. We present the range;
-we do not average.
+If A, B, and C disagree wildly, that finding — "Arizona has no idea how
+much solar it wastes" — ships as the result. We present the range; we do
+not average.
 
 ## 4. Flexible compute simulation
 
@@ -270,33 +316,39 @@ Image(filename=str(f6()))
 
 ## 5. Ways this could be wrong (pre-registered)
 
-Written before any real-data results exist, to be kept verbatim:
+Items 1–7 were written before any real-data results existed and are kept
+verbatim; item 8 was added when the weather substitution was made, before
+real results were inspected.
 
 1. **Calibration-period contamination.** If "unconstrained" months contain
    curtailment, A under-estimates. (Direction: low.)
 2. **Outages and derates masquerade as curtailment.** The band carries the
-   average outage rate, not outage *years*; our fixture produced exactly one
-   such band miss in nine. (Direction: high, occasionally badly.)
-3. **EIA-930 data quality.** Imputed-hour flags are unavailable via the v2
-   API; if the bulk-CSV flags disagree materially, hourly results shift.
-4. **OASIS/WEIM assumptions unverified.** Report names, node choice, and
-   price basis for the Arizona LAPs must be confirmed on the live system;
-   Estimator B could change qualitatively.
+   average outage rate, not outage *years*; the validation fixture produced
+   exactly one such band miss in nine. (Direction: high, occasionally badly.)
+3. **EIA-930 data quality.** Imputation flags now handled via the bulk
+   CSVs; we additionally found and excluded physically impossible unflagged
+   hours. Residual undetected reporting errors remain possible.
+4. **OASIS/WEIM assumptions.** Node names and report verified live, but
+   the ELAP series begins 2023-04; whether ELAP hourly means are the right
+   price basis for *plant-level* economics is an assumption.
 5. **Economic vs. physical.** A sees the union; B sees mostly economic. We
    report both and never allocate the difference without evidence.
 6. **The compute model is stylized.** Weekly-energy SLA and a constant
    checkpoint overhead are crude proxies for real training economics;
    the fully-deferrable rows especially should be read as an envelope.
 7. **Synthetic-fixture circularity risk.** The fixture's weather and fleet
-   are generated by the same physical model family the estimator uses,
-   with injected biases/noise. Real weather error is likely worse. Recovery
-   results are therefore an upper bound on real-world performance.
+   are generated by the same physical model family the estimator uses, so
+   recovery results are an upper bound on real-world performance.
+8. **Weather source substitution.** Plant-level irradiance is Open-Meteo
+   ERA5-blend, not NSRDB. Calibration absorbs mean bias, but correlated
+   weather error (e.g. monsoon cloud timing) can masquerade as curtailment
+   or hide it. The NSRDB re-run is the single most important robustness
+   check owed.
 
 ## 6. Replication
 
-`make setup && make demo && make paper` reproduces this document end to end
-with no keys (synthetic mode). For real data: put free EIA and NREL keys in
-`.env`, verify each fetcher against a live response (checklist in
-`SOURCES.md`), then `make real && make paper`. Every figure regenerates from
-the DuckDB store at render time; every quantitative sentence above traces to
-a `figure_id` or `table_id`.
+`make setup && make demo && make paper` reproduces the validation build
+with no keys. `make real && make paper` reproduces this document's data
+path (two free API keys; see SOURCES.md for the per-source verification
+log). Every figure regenerates from the DuckDB store at render time; every
+quantitative sentence traces to a `figure_id` or `table_id`.

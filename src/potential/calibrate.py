@@ -31,11 +31,27 @@ HOLDOUT_FRACTION = 0.3
 RESIDUAL_QUANTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
 
 
+def _in_service_fraction(gens: pd.DataFrame, index: pd.DatetimeIndex) -> pd.Series:
+    """Share of a plant's AC capacity in service at each hour (phased
+    build-outs: live EIA-860 shows plants adding generators over years)."""
+    total = gens["capacity_mw_ac"].sum()
+    frac = pd.Series(0.0, index=index)
+    for _, g in gens.iterrows():
+        frac[index >= g["in_service"]] += g["capacity_mw_ac"] / total
+    return frac.clip(upper=1.0)
+
+
 def modeled_potential_all_plants() -> pd.DataFrame:
     """Run the physical model for every plant; persist potential_plant_hour."""
     with connect(read_only=True) as con:
         fleet = con.execute("SELECT * FROM fleet").df()
         weather = con.execute("SELECT * FROM weather_obs").df()
+        tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+        gens = (
+            con.execute("SELECT * FROM fleet_generators").df()
+            if "fleet_generators" in tables
+            else None
+        )
 
     frames = []
     for _, plant in fleet.iterrows():
@@ -43,6 +59,11 @@ def modeled_potential_all_plants() -> pd.DataFrame:
         w.index = pd.DatetimeIndex(w["ts_utc"], tz="UTC")
         w = w.sort_index()
         pot = plant_potential_ac_mw(plant, w[["ghi", "dni", "dhi", "temp_air"]])
+        if gens is not None:
+            pg = gens[gens["plant_id"] == plant["plant_id"]]
+            if len(pg):
+                naive_idx = pd.DatetimeIndex(w["ts_utc"])
+                pot = pot * _in_service_fraction(pg, naive_idx).to_numpy()
         frames.append(
             pd.DataFrame(
                 {
@@ -82,11 +103,15 @@ def calibrate(seed: int = 7) -> pd.DataFrame:
     for plant_id, g in m.groupby("plant_id"):
         train = g[g["eligible"] & ~g["holdout"]]
         hold = g[g["holdout"]]
-        scale = train["net_gen_mwh"].sum() / train["potential_mwh"].sum()
+        scale = (
+            train["net_gen_mwh"].sum() / train["potential_mwh"].sum()
+            if len(train) >= 3 and train["potential_mwh"].sum() > 0
+            else np.nan
+        )
         pred_hold = hold["potential_mwh"] * scale
         mae_pct = (
             100 * (pred_hold - hold["net_gen_mwh"]).abs().div(hold["net_gen_mwh"]).mean()
-            if len(hold)
+            if len(hold) and np.isfinite(scale)
             else np.nan
         )
         rows.append(
@@ -102,6 +127,29 @@ def calibrate(seed: int = 7) -> pd.DataFrame:
         val_rows.append(g)
 
     cal = pd.DataFrame(rows)
+    # Real fleets contain plants too new (or too gappy in 923) to calibrate:
+    # give them the fleet-median scale, flagged, rather than silently
+    # dropping their potential from the BA sum. Implausible fitted scales
+    # (bad 923 match, metering quirks) get the same treatment.
+    plausible = cal["scale"].between(0.3, 1.7)
+    fallback = cal.loc[plausible, "scale"].median()
+    cal["calibrated"] = plausible & cal["scale"].notna()
+    cal.loc[~cal["calibrated"], "scale"] = fallback
+    # Plants in the fleet but absent from 923 entirely:
+    with connect(read_only=True) as con:
+        all_plants = con.execute("SELECT DISTINCT plant_id FROM fleet").df()["plant_id"]
+    missing = set(all_plants) - set(cal["plant_id"])
+    if missing:
+        cal = pd.concat(
+            [cal, pd.DataFrame(
+                {"plant_id": sorted(missing), "scale": fallback, "n_train_months": 0,
+                 "n_holdout_months": 0, "holdout_mae_pct": np.nan, "calibrated": False}
+            )],
+            ignore_index=True,
+        )
+    n_fb = int((~cal["calibrated"]).sum())
+    if n_fb:
+        print(f"calibration: {n_fb}/{len(cal)} plants on fallback scale {fallback:.3f}")
     write_table(cal, "calibration")
     write_table(pd.concat(val_rows, ignore_index=True), "potential_monthly_validation")
     return cal

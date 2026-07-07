@@ -33,14 +33,44 @@ def build_demo(seed: int = 42) -> None:
     )
 
 
-def build_real(start: str = "2022-01-01", end: str = "2024-12-31", fleet_year: int = 2023) -> None:
-    from src.fleet.eia860 import build_az_solar_fleet
-    from src.fleet.eia923 import fetch_monthly_plant_gen
-    from src.fleet.eia930 import fetch_hourly_solar
+SUSPECT_FACTOR = 1.25  # 930 solar above this x fleet AC nameplate is impossible
 
-    write_table(build_az_solar_fleet(fleet_year), "fleet")
-    write_table(fetch_hourly_solar(f"{start}T00", f"{end}T23"), "hourly_ba_solar")
+
+def build_real(start: str = "2022-01-01", end: str = "2024-12-31", fleet_year: int = 2024) -> None:
+    """Live-data build. VERIFIED-LIVE fetchers only (see SOURCES.md).
+
+    Fleet is restricted to the three AZ BAs (live EIA-860 shows ~1.8 GW of
+    AZ solar interconnected to CISO/WALC, outside our 930 series). Hours
+    with physically impossible 930 solar (> SUSPECT_FACTOR x fleet AC, e.g.
+    AZPS 2024-01-25 at 3,822 MW vs a 919 MW fleet) are folded into the
+    unusable-hour flag alongside EIA's imputed hours.
+    """
+    from src.estimators.b_eim_prices import fetch_eim_prices
+    from src.fleet.eia860 import build_az_solar_fleet, generator_capacities
+    from src.fleet.eia923 import fetch_monthly_plant_gen
+    from src.fleet.eia930 import BA_CODES, fetch_hourly_solar_bulk
+    from src.potential.weather import fetch_fleet_weather
+
+    years = tuple(range(int(start[:4]), int(end[:4]) + 1))
+
+    fleet = build_az_solar_fleet(fleet_year)
+    fleet = fleet[fleet["ba_code"].isin(BA_CODES)].reset_index(drop=True)
+    write_table(fleet, "fleet")
+    gens = generator_capacities(fleet_year)
+    write_table(gens[gens["plant_id"].isin(fleet["plant_id"])], "fleet_generators")
+
+    hourly = fetch_hourly_solar_bulk(years=years)
+    fleet_ac = fleet.groupby("ba_code")["capacity_mw_ac"].sum()
+    cap = hourly["ba_code"].map(fleet_ac)
+    suspect = hourly["solar_mw"] > SUSPECT_FACTOR * cap
+    hourly["is_imputed"] = hourly["is_imputed"].astype(bool) | suspect
+    write_table(hourly, "hourly_ba_solar")
+    print(f"unusable hours: imputed+suspect={int(hourly['is_imputed'].sum())} "
+          f"(suspect alone: {int(suspect.sum())})")
+
     write_table(fetch_monthly_plant_gen(start[:7], end[:7]), "monthly_plant_gen")
+    write_table(fetch_fleet_weather(fleet, start, end), "weather_obs")
+    write_table(fetch_eim_prices(), "eim_prices")
     write_table(
         pd.DataFrame(
             [{"mode": "real", "built_at_utc": datetime.now(timezone.utc).isoformat()}]

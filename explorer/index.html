@@ -83,9 +83,9 @@
         <div class="tile"><div class="v">${fmtGWh(mid)}</div>
           <div class="l">estimated surplus in ${year} (median; band ${fmtGWh(lo)}–${fmtGWh(hi)})</div></div>
         <div class="tile"><div class="v">${ref ? ref.surplus_share_pct + "%" : "–"}</div>
-          <div class="l">of a 100 MW DC's energy from surplus — realistic anchor (partially deferrable, SLA 0.9, 2022–24 average)</div></div>
+          <div class="l">of a 100 MW DC's energy from surplus — realistic anchor (partially deferrable, SLA 0.9, study-window average)</div></div>
         <div class="tile"><div class="v">${opt ? opt.surplus_share_pct + "%" : "–"}</div>
-          <div class="l">optimistic envelope (fully deferrable, SLA 0.5, 2022–24 average)</div></div>`;
+          <div class="l">optimistic envelope (fully deferrable, SLA 0.5, study-window average)</div></div>`;
       drawChart(rows);
     }
 

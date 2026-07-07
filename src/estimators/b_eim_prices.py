@@ -8,44 +8,108 @@ cannot curtail more than was available). Physical (grid-constrained)
 curtailment often shows no price signal at all, so B is expected to sit
 below A. This is stated, not smoothed over.
 
-Real mode: fetch_oasis_prices() targets CAISO OASIS SingleZip. STATUS:
-unverified-live — report name and AZ node naming MUST be investigated on the
-live OASIS site and recorded in SOURCES.md `oasis` before trusting anything
-it returns (SPEC.md says do not trust the spec on this).
+Real mode — VERIFIED LIVE 2026-07-07 (see SOURCES.md `oasis`):
+- Report: `PRC_INTVL_LMP` (RTM, 5-minute) via SingleZip, resultformat=6.
+  Rows repeat per LMP_TYPE (LMP/MCC/MCE/MCL); the price column is named
+  literally "MW". Filter LMP_TYPE == 'LMP'.
+- Arizona EIM Load Aggregation Points (probed live; wrong names return an
+  .xml error member instead of a .csv): ELAP_AZPS-APND, ELAP_SRP-APND,
+  ELAP_TEPC-APND.
+- DATA AVAILABILITY (bisected live): ELAP_* price data exists on OASIS only
+  from ~2023-04-01 onward — nothing in 2022 or Jan-Mar 2023, under any
+  naming variant we probed. Estimator B therefore covers Apr-2023+ on real
+  data, and the triangulation must say so.
+- SPAN LIMIT (probed live): requests for this 5-min report fail beyond ~1
+  week; we chunk by 7 days.
+- 5-min prices are averaged to hour-beginning UTC hours for analysis.
 """
 
 from __future__ import annotations
 
 import io
+import time
 import zipfile
 
 import pandas as pd
 
+from src.config import RAW_DIR
 from src.store import connect, write_table
 
 OASIS_BASE = "https://oasis.caiso.com/oasisapi/SingleZip"
-# Candidate report per OASIS docs; VERIFY against live OASIS before use.
 OASIS_QUERY = "PRC_INTVL_LMP"
+EIM_NODES = {"AZPS": "ELAP_AZPS-APND", "SRP": "ELAP_SRP-APND", "TEPC": "ELAP_TEPC-APND"}
 NEG_THRESHOLD = 0.0  # $/MWh; hours at or below count as surplus signal
+_SLEEP_S = 5  # OASIS rate limiting is aggressive
 
 
-def fetch_oasis_prices(start: str, end: str, node: str) -> pd.DataFrame:
-    """Real-mode fetcher (unverified-live; see module docstring)."""
-    import requests
+EIM_DATA_START = "2023-04-01"  # bisected live; nothing published before this
+_CHUNK_DAYS = 7  # span limit probed live
 
+
+def _fetch_chunk(node: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+    """One node-chunk (<= 7 days) of 5-min RTM LMPs, cached to parquet."""
+    tag = f"{node}_{start:%Y%m%d}_{end:%Y%m%d}"
+    cache = RAW_DIR / "oasis" / f"{tag}.parquet"
+    if cache.exists():
+        return pd.read_parquet(cache)
     params = {
         "queryname": OASIS_QUERY,
-        "startdatetime": f"{start}T08:00-0000",
-        "enddatetime": f"{end}T08:00-0000",
+        "startdatetime": start.strftime("%Y%m%dT00:00-0000"),
+        "enddatetime": end.strftime("%Y%m%dT00:00-0000"),
         "version": "1",
         "market_run_id": "RTM",
         "node": node,
-        "resultformat": "6",  # CSV
+        "resultformat": "6",
     }
-    resp = requests.get(OASIS_BASE, params=params, timeout=300)
-    resp.raise_for_status()
-    zf = zipfile.ZipFile(io.BytesIO(resp.content))
-    return pd.read_csv(zf.open(zf.namelist()[0]))
+    import requests
+
+    for attempt in range(6):
+        resp = requests.get(OASIS_BASE, params=params, timeout=600)
+        if resp.status_code == 429:
+            time.sleep(30 * (attempt + 1))
+            continue
+        resp.raise_for_status()
+        zf = zipfile.ZipFile(io.BytesIO(resp.content))
+        member = zf.namelist()[0]
+        if member.endswith(".xml"):  # OASIS error payload
+            raise RuntimeError(f"OASIS error for {tag}: {member}")
+        df = pd.read_csv(zf.open(member))
+        df = df[df["LMP_TYPE"] == "LMP"][["INTERVALSTARTTIME_GMT", "MW"]]
+        out = pd.DataFrame(
+            {
+                "ts5_utc": pd.to_datetime(df["INTERVALSTARTTIME_GMT"]).dt.tz_localize(None),
+                "lmp_usd_mwh": pd.to_numeric(df["MW"], errors="coerce"),
+            }
+        )
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        out.to_parquet(cache, index=False)
+        time.sleep(_SLEEP_S)
+        return out
+    raise RuntimeError(f"OASIS kept rate-limiting {tag}")
+
+
+def fetch_eim_prices(start: str = EIM_DATA_START, end: str = "2024-12-31") -> pd.DataFrame:
+    """Hourly (hour-beginning UTC) mean RTM LMP per BA, chunked + cached."""
+    edges = pd.date_range(start, pd.Timestamp(end) + pd.Timedelta(days=1),
+                          freq=f"{_CHUNK_DAYS}D")
+    if edges[-1] < pd.Timestamp(end) + pd.Timedelta(days=1):
+        edges = edges.append(pd.DatetimeIndex([pd.Timestamp(end) + pd.Timedelta(days=1)]))
+    frames = []
+    for ba, node in EIM_NODES.items():
+        for s, e in zip(edges[:-1], edges[1:], strict=False):
+            five_min = _fetch_chunk(node, s, e)
+            hourly = (
+                five_min.set_index("ts5_utc")
+                .resample("1h")["lmp_usd_mwh"]
+                .mean()
+                .dropna()
+                .reset_index()
+                .rename(columns={"ts5_utc": "ts_utc"})
+            )
+            hourly.insert(0, "ba_code", ba)
+            frames.append(hourly)
+    out = pd.concat(frames, ignore_index=True)
+    return out.drop_duplicates(subset=["ba_code", "ts_utc"]).reset_index(drop=True)
 
 
 def run() -> pd.DataFrame:
