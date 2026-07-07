@@ -26,8 +26,10 @@ paper/_output/
 paper/figures/
 paper/*_files/
 
-# generated explorer dataset (regenerate via `make demo` / `make real`)
-explorer/data.js
+# explorer/data.js is generated (via `make demo` / `make real`) but IS
+# committed: it's the deployed explorer's only data source, and static hosts
+# (Vercel/GitHub Pages) have no way to regenerate it. Refresh + commit after
+# a real rebuild. (Do not gitignore it or the deployed page renders blank.)
 
 # misc
 .DS_Store
