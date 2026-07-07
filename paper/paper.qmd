@@ -174,6 +174,14 @@ from src.figures.fig_negative_price_hours import build as f3
 Image(filename=str(f3()))
 ```
 
+```{python}
+#| echo: false
+#| label: fig-neg-price-calendar
+#| fig-cap: "The operational view: share of days each month × hour combination cleared at ≤ $0/MWh (MST). The March–May midday block is the actionable window for any flexible load. Note the seasonal shape independently matches the documented 2018 anchor ('pronounced peak in March and April'). figure_id: fig-neg-price-calendar"
+from src.figures.fig_neg_price_calendar import build as f3b
+Image(filename=str(f3b()))
+```
+
 ### 3.4 Estimator C — documented anchors
 
 Hand-curated statements from IRPs, ACC/FERC filings, studies, and investor
@@ -377,6 +385,39 @@ print(
 from src.figures.fig_tornado import build as f6
 Image(filename=str(f6()))
 ```
+
+## 4b. What is the surplus worth?
+
+Three documented conversions (all in the assumptions table; ranges inherit
+the estimation bands, never narrowed) translate the estimate into decision
+units:
+
+```{python}
+#| echo: false
+#| output: asis
+v = q("""SELECT CAST(year AS INT) AS year,
+                SUM(curt_mid_mwh) mid_mwh, SUM(curt_hi_mwh) hi_mwh,
+                SUM(avoided_cost_mid_usd) av_mid, SUM(avoided_cost_hi_usd) av_hi,
+                SUM(homes_mid) homes_mid, SUM(homes_hi) homes_hi,
+                SUM(tco2_hi) tco2_hi
+         FROM value_annual GROUP BY 1 ORDER BY 1""")
+last = v.iloc[-1]
+print(
+    f"For {int(last.year)} (SRP + TEPC only), the estimated surplus is worth "
+    f"**${last.av_mid/1e6:.1f}M** at the assumed avoided-cost spread (median; "
+    f"up to ${last.av_hi/1e6:.1f}M at the band's top), equivalent to powering "
+    f"**{last.homes_mid:,.0f}** Arizona homes for the year (up to "
+    f"{last.homes_hi:,.0f}), or displacing up to {last.tco2_hi:,.0f} tCO₂ of "
+    "marginal gas generation if absorbed rather than shed "
+    "(table_id: value_annual). During negative-price hours specifically, the "
+    "hourly-coincident estimate of producer payments to curtail is reported "
+    "in `value_annual.dump_payment_mid_usd` — labeled indicative, since the "
+    "hourly series does not carry the annual baseline correction."
+)
+```
+
+These are floor numbers in two senses: they exclude AZPS (whose series
+cannot be audited), and Estimator A's calibration direction is conservative.
 
 ## 5. Ways this could be wrong (pre-registered)
 

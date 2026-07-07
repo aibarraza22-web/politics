@@ -1,0 +1,37 @@
+name: Daily solar-waste monitor
+
+# Pulls yesterday's RTM prices at the three Arizona EIM nodes from CAISO
+# OASIS (public, no key) and refreshes explorer/monitor.js so the deployed
+# explorer shows current conditions. Activates once this file is on the
+# default branch.
+
+on:
+  schedule:
+    - cron: "0 14 * * *"   # daily 14:00 UTC = 7:00 MST
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Update monitor
+        run: uv run python -m src.monitor_daily
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add explorer/monitor.js
+          git diff --cached --quiet || git commit -m "monitor: daily price update"
+          git push

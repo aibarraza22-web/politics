@@ -1,0 +1,1 @@
+window.C2C_MONITOR = [{"ba_code": "AZPS", "date": "2026-07-05", "neg_hours": 0, "min_price": 10.45, "mean_price": 16.14}, {"ba_code": "SRP", "date": "2026-07-05", "neg_hours": 0, "min_price": 8.12, "mean_price": 14.64}, {"ba_code": "TEPC", "date": "2026-07-05", "neg_hours": 0, "min_price": 10.44, "mean_price": 16.17}];

@@ -72,6 +72,32 @@ APS 2023 IRP, TEP 2023 IRP, SRP ISP, ACC eDocket search for "curtailment"
 — target 5+ verified anchors in `anchors.csv`. Each anchor is a citation
 the estimators can be graded against.
 
+## Track 7 — Applications layer (BUILT 2026-07-07)
+
+The importance ceiling isn't the estimate — it's whether specific actors can
+act on it. Shipped:
+
+- **The "when to run" calendar** (`fig-neg-price-calendar` + interactive in
+  the explorer): month × hour share of negative-price days per BA. In
+  March–May, 80–90% of midday days clear ≤ $0 — the operational window for
+  any flexible load (compute, EV fleets, water, hydrogen, pre-cooling).
+- **The value layer** (`src/value.py` → `value_annual`): banded avoided-cost
+  dollars, AZ-homes equivalents, tCO₂ of displaced marginal gas, and an
+  hourly-coincident estimate of producer payments during negative hours.
+- **The living monitor** (`src/monitor_daily.py` +
+  `.github/workflows/monitor.yml`): a keyless daily GitHub Action that pulls
+  yesterday's OASIS prices and refreshes the explorer — the page is current
+  every morning without anyone touching it. (Activates when merged to the
+  default branch.)
+- **Explorer v2**: retitled *Arizona Solar Waste Monitor*; value tiles,
+  interactive calendar with hover, yesterday-on-the-grid strip.
+
+Natural next applications (not yet built): a "flexible-load siting memo"
+per utility (which BA, which months, what a PPA-plus-curtailment-rider
+should pay); an SRP/TEP-specific one-pager for their IRP public-comment
+processes; an ISO-style annual "State of Arizona Solar Waste" report
+generated from `make real` each January.
+
 ## What NOT to do
 
 - Don't lead with the compute number; its band is honest but wide.

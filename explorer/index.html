@@ -3,28 +3,31 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Curtailment-to-Compute: Arizona — Explorer</title>
+  <title>Arizona Solar Waste Monitor — Curtailment-to-Compute</title>
   <style>
     :root {
       --ink: #0b0b0b; --ink2: #52514e; --grid: #e6e5e0;
       --s1: #2a78d6; --s2: #1baf7a; --s3: #eda100;
     }
-    body { font-family: system-ui, sans-serif; max-width: 56rem; margin: 2.5rem auto;
+    body { font-family: system-ui, sans-serif; max-width: 58rem; margin: 2.5rem auto;
            padding: 0 1rem; color: var(--ink); }
     .banner { background: #fdeaea; color: #8a1c1c; font-weight: 600; padding: .6rem 1rem;
               border-radius: 6px; font-size: .85rem; margin-bottom: 1.2rem; }
-    h1 { font-size: 1.5rem; } .note { color: var(--ink2); font-size: .92rem; }
-    .controls { margin: 1.2rem 0; display: flex; gap: .5rem; align-items: center; }
+    h1 { font-size: 1.55rem; margin-bottom: .2rem; }
+    h2 { font-size: 1.1rem; margin: 2rem 0 .4rem; }
+    .note { color: var(--ink2); font-size: .92rem; }
+    .controls { margin: 1rem 0; display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
     .controls button { border: 1px solid var(--grid); background: #fff; padding: .35rem .9rem;
                        border-radius: 6px; cursor: pointer; font-size: .95rem; }
     .controls button.active { background: var(--s1); color: #fff; border-color: var(--s1); }
-    .tiles { display: flex; gap: 1rem; flex-wrap: wrap; margin: 1rem 0 1.5rem; }
+    .tiles { display: flex; gap: 1rem; flex-wrap: wrap; margin: 1rem 0 1.2rem; }
     .tile { border: 1px solid var(--grid); border-radius: 8px; padding: .8rem 1.1rem; flex: 1;
-            min-width: 12rem; }
-    .tile .v { font-size: 1.45rem; font-weight: 700; } .tile .l { color: var(--ink2);
-            font-size: .8rem; }
+            min-width: 11rem; }
+    .tile .v { font-size: 1.45rem; font-weight: 700; }
+    .tile .l { color: var(--ink2); font-size: .8rem; }
     svg text { font-family: system-ui, sans-serif; }
-    footer { color: var(--ink2); font-size: .8rem; margin-top: 2rem; }
+    #calReadout { font-size: .88rem; color: var(--ink2); min-height: 1.4em; margin-top: .3rem; }
+    footer { color: var(--ink2); font-size: .8rem; margin-top: 2.2rem; line-height: 1.5; }
   </style>
 </head>
 <body>
@@ -32,98 +35,188 @@
     SYNTHETIC DEMONSTRATION DATA — this explorer is running on the validation
     fixture, not on estimates of actual Arizona curtailment.
   </div>
-  <h1>Curtailment-to-Compute: Arizona</h1>
+  <h1>Arizona Solar Waste Monitor</h1>
   <p class="note">
-    Pick a year to see estimated monthly surplus (curtailed) solar energy —
-    Estimator A's median with its 5–95% band — and what share of a flexible
-    100&nbsp;MW data center's energy those windows would have supplied.
+    Arizona's utilities don't publish how much solar they curtail. This page
+    estimates it from public data — physics-based potential vs. reported
+    output, triangulated against CAISO's real-time prices at Arizona's grid
+    nodes — with the uncertainty shown, never hidden.
   </p>
 
+  <div class="tiles" id="liveTiles" hidden></div>
+
+  <h2>Estimated surplus (curtailed) solar energy</h2>
   <div class="controls" id="yearButtons"></div>
   <div class="tiles" id="tiles"></div>
   <div id="chart"></div>
 
-  <footer>
+  <h2>When prices go negative — the "run flexible load now" calendar</h2>
+  <p class="note">Share of days each hour's average real-time price was ≤ $0
+    at the utility's market node (Apr 2023 – Dec 2024). Darker = solar being
+    given away or worse. Hover any cell.</p>
+  <div class="controls" id="baButtons"></div>
+  <div id="calendar"></div>
+  <div id="calReadout"></div>
+
+  <footer id="foot">
     Method + caveats: see the working paper in this repository. Estimator A
     sees the union of economic and physical curtailment plus residual model
-    error; bands are propagated calibration residuals, not confidence in the
-    colloquial sense.
+    error; bands are propagated calibration residuals. Value figures use
+    documented assumptions (tariff spread $40/MWh, 12 MWh/yr per AZ home,
+    0.42 tCO₂/MWh gas marginal) applied to banded estimates — ranges inherit
+    estimation ranges.
   </footer>
 
   <script src="data.js"></script>
+  <script src="monitor.js"></script>
+  <script>
+    (function () {
+      const M = window.C2C_MONITOR;
+      if (!M || !M.length) return;
+      const lastDate = M[M.length - 1].date;
+      const rows = M.filter(r => r.date === lastDate);
+      const total = rows.reduce((a, r) => a + r.neg_hours, 0);
+      const minP = Math.min(...rows.map(r => r.min_price));
+      const el = document.getElementById("liveTiles");
+      el.hidden = false;
+      el.innerHTML = `
+        <div class="tile"><div class="v">${total} h</div>
+          <div class="l">negative/zero-price hours across AZPS+SRP+TEPC on
+          ${lastDate} (latest published day, via CAISO OASIS — updates daily)</div></div>
+        <div class="tile"><div class="v">$${minP}/MWh</div>
+          <div class="l">lowest hourly average price on ${lastDate}</div></div>`;
+    })();
+  </script>
   <script>
     const D = window.C2C_DATA;
     if (D.mode !== "real") document.getElementById("banner").hidden = false;
+    if (D.coverage_note) {
+      const f = document.getElementById("foot");
+      f.innerHTML = D.coverage_note + "<br/><br/>" + f.innerHTML;
+    }
     const years = D.years.filter(y => D.monthly_surplus.filter(m => m.year === y).length >= 12);
     let year = years[years.length - 1];
+    const bas = [...new Set(D.neg_calendar.map(r => r.ba_code))].sort();
+    let ba = bas[0];
 
-    const btns = document.getElementById("yearButtons");
-    years.forEach(y => {
-      const b = document.createElement("button");
-      b.textContent = y;
-      b.onclick = () => { year = y; render(); };
-      btns.appendChild(b);
-    });
+    function mkButtons(el, items, get, set) {
+      items.forEach(it => {
+        const b = document.createElement("button");
+        b.textContent = it;
+        b.onclick = () => { set(it); renderAll(); };
+        el.appendChild(b);
+      });
+      return () => [...el.children].forEach(b =>
+        b.classList.toggle("active", b.textContent === String(get())));
+    }
+    const syncYears = mkButtons(document.getElementById("yearButtons"), years,
+                                () => year, v => year = +v);
+    const syncBAs = mkButtons(document.getElementById("baButtons"), bas,
+                              () => ba, v => ba = v);
 
-    function fmtGWh(mwh) { return (mwh / 1000).toFixed(1) + " GWh"; }
+    const fmtGWh = mwh => (mwh / 1000).toFixed(1) + " GWh";
+    const fmtM = usd => "$" + (usd / 1e6).toFixed(1) + "M";
+    const fmtK = n => n >= 1000 ? (n / 1000).toFixed(1) + "k" : Math.round(n);
 
-    function render() {
-      [...btns.children].forEach(b => b.classList.toggle("active", +b.textContent === year));
+    function renderTiles() {
       const rows = D.monthly_surplus.filter(m => m.year === year);
-      const lo = rows.reduce((a, r) => a + r.lo_mwh, 0);
-      const mid = rows.reduce((a, r) => a + r.mid_mwh, 0);
-      const hi = rows.reduce((a, r) => a + r.hi_mwh, 0);
-      const ref = D.scenarios.find(s =>
-        s.it_mw === 100 && s.flexibility === "partially_deferrable" &&
-        s.sla_frac === 0.9 && s.battery_h === 0);
-      const opt = D.scenarios.find(s =>
-        s.it_mw === 100 && s.flexibility === "fully_deferrable" &&
-        s.sla_frac === 0.5 && s.battery_h === 0);
+      const s = k => rows.reduce((a, r) => a + r[k], 0);
+      const v = (D.value_annual || []).find(r => r.year === year);
+      const na = D.neg_annual.filter(r => r.year === year)
+                   .reduce((a, r) => a + r.neg_hours, 0);
+      const ref = D.scenarios.find(x => x.it_mw === 100 &&
+        x.flexibility === "partially_deferrable" && x.sla_frac === 0.9 && x.battery_h === 0);
       document.getElementById("tiles").innerHTML = `
-        <div class="tile"><div class="v">${fmtGWh(mid)}</div>
-          <div class="l">estimated surplus in ${year} (median; band ${fmtGWh(lo)}–${fmtGWh(hi)})</div></div>
+        <div class="tile"><div class="v">${fmtGWh(s("mid_mwh"))}</div>
+          <div class="l">estimated surplus in ${year} (median; band
+          ${fmtGWh(s("lo_mwh"))}–${fmtGWh(s("hi_mwh"))})</div></div>
+        <div class="tile"><div class="v">${v ? fmtM(v.avoided_usd_mid) : "–"}</div>
+          <div class="l">avoided-cost value to a flexible buyer (median; up to
+          ${v ? fmtM(v.avoided_usd_hi) : "–"})</div></div>
+        <div class="tile"><div class="v">${v ? fmtK(v.homes_mid) : "–"}</div>
+          <div class="l">Arizona homes that energy could power for the year
+          (median; up to ${v ? fmtK(v.homes_hi) : "–"})</div></div>
+        <div class="tile"><div class="v">${na || "–"}</div>
+          <div class="l">hours of negative/zero prices across the three AZ
+          nodes in ${year}${year <= 2023 ? " (from Apr)" : ""}</div></div>
         <div class="tile"><div class="v">${ref ? ref.surplus_share_pct + "%" : "–"}</div>
-          <div class="l">of a 100 MW DC's energy from surplus — realistic anchor (partially deferrable, SLA 0.9, study-window average)</div></div>
-        <div class="tile"><div class="v">${opt ? opt.surplus_share_pct + "%" : "–"}</div>
-          <div class="l">optimistic envelope (fully deferrable, SLA 0.5, study-window average)</div></div>`;
-      drawChart(rows);
+          <div class="l">of a 100 MW flexible data center's energy the surplus
+          could serve (realistic anchor scenario)</div></div>`;
     }
 
-    function drawChart(rows) {
-      const W = 860, H = 330, padL = 64, padB = 40, padT = 16, padR = 10;
+    function renderBars() {
+      const rows = D.monthly_surplus.filter(m => m.year === year);
+      const W = 880, H = 300, padL = 62, padB = 38, padT = 14, padR = 8;
       const maxV = Math.max(...D.monthly_surplus.map(r => r.hi_mwh)) * 1.05;
       const x = i => padL + i * (W - padL - padR) / 12;
       const bw = (W - padL - padR) / 12 - 8;
       const y = v => H - padB - (v / maxV) * (H - padB - padT);
       const months = ["J","F","M","A","M","J","J","A","S","O","N","D"];
-      let s = `<svg viewBox="0 0 ${W} ${H}" role="img"
-                 aria-label="Monthly surplus energy with uncertainty band">`;
+      let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Monthly surplus with band">`;
       for (let g = 0; g <= 4; g++) {
         const v = maxV * g / 4;
-        s += `<line x1="${padL}" x2="${W - padR}" y1="${y(v)}" y2="${y(v)}"
-                stroke="var(--grid)"/>
-              <text x="${padL - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11"
-                fill="var(--ink2)">${Math.round(v / 1000)}</text>`;
+        s += `<line x1="${padL}" x2="${W-padR}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>
+              <text x="${padL-8}" y="${y(v)+4}" text-anchor="end" font-size="11"
+                fill="var(--ink2)">${Math.round(v/1000)}</text>`;
       }
       rows.forEach((r, i) => {
         const cx = x(i) + bw / 2;
         s += `<rect x="${x(i)}" y="${y(r.mid_mwh)}" width="${bw}"
-                height="${H - padB - y(r.mid_mwh)}" rx="4" fill="var(--s1)"/>
+                height="${H-padB-y(r.mid_mwh)}" rx="4" fill="var(--s1)"/>
               <line x1="${cx}" x2="${cx}" y1="${y(r.lo_mwh)}" y2="${y(r.hi_mwh)}"
                 stroke="var(--ink)" stroke-width="1.5"/>
-              <line x1="${cx - 5}" x2="${cx + 5}" y1="${y(r.lo_mwh)}" y2="${y(r.lo_mwh)}"
-                stroke="var(--ink)" stroke-width="1.5"/>
-              <line x1="${cx - 5}" x2="${cx + 5}" y1="${y(r.hi_mwh)}" y2="${y(r.hi_mwh)}"
-                stroke="var(--ink)" stroke-width="1.5"/>
-              <text x="${cx}" y="${H - padB + 16}" text-anchor="middle" font-size="11"
-                fill="var(--ink2)">${months[r.month - 1]}</text>`;
+              <text x="${cx}" y="${H-padB+16}" text-anchor="middle" font-size="11"
+                fill="var(--ink2)">${months[r.month-1]}</text>`;
       });
-      s += `<text x="${padL - 44}" y="${padT + 8}" font-size="11" fill="var(--ink2)"
-              transform="rotate(-90 ${padL - 44} ${padT + 8})" text-anchor="end">GWh</text></svg>`;
+      s += `<text x="${padL-40}" y="${padT+6}" font-size="11" fill="var(--ink2)"
+              transform="rotate(-90 ${padL-40} ${padT+6})" text-anchor="end">GWh</text></svg>`;
       document.getElementById("chart").innerHTML = s;
     }
 
-    render();
+    function renderCalendar() {
+      const rows = D.neg_calendar.filter(r => r.ba_code === ba);
+      const grid = {};
+      rows.forEach(r => grid[`${r.month}-${r.hour}`] = r.neg_pct);
+      const W = 880, H = 340, padL = 56, padB = 34, padT = 8, padR = 60;
+      const cw = (W - padL - padR) / 12, ch = (H - padT - padB) / 24;
+      const maxP = Math.max(...D.neg_calendar.map(r => r.neg_pct), 1);
+      const months = ["J","F","M","A","M","J","J","A","S","O","N","D"];
+      const monthsFull = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Negative price calendar">`;
+      for (let m = 1; m <= 12; m++) for (let h = 0; h < 24; h++) {
+        const p = grid[`${m}-${h}`] ?? 0;
+        const t = p / maxP;
+        const col = `rgb(${Math.round(252-t*(252-15))},${Math.round(252-t*(252-72))},${Math.round(251-t*(251-146))})`;
+        s += `<rect x="${padL+(m-1)*cw}" y="${padT+(23-h)*ch}" width="${cw-1.5}"
+                height="${ch-1.5}" rx="2" fill="${col}"
+                data-r="${monthsFull[m-1]}, ${String(h).padStart(2,"0")}:00–${String(h+1).padStart(2,"0")}:00 MST — price ≤ $0 on ${p}% of days"/>`;
+      }
+      for (let m = 0; m < 12; m++)
+        s += `<text x="${padL+m*cw+cw/2}" y="${H-padB+15}" text-anchor="middle"
+                font-size="11" fill="var(--ink2)">${months[m]}</text>`;
+      for (let h = 0; h <= 23; h += 6)
+        s += `<text x="${padL-6}" y="${padT+(23.5-h)*ch+3}" text-anchor="end"
+                font-size="10" fill="var(--ink2)">${h}:00</text>`;
+      for (let g = 0; g <= 4; g++) {
+        const t = g / 4;
+        const col = `rgb(${Math.round(252-t*(252-15))},${Math.round(252-t*(252-72))},${Math.round(251-t*(251-146))})`;
+        s += `<rect x="${W-padR+16}" y="${padT+120-g*24}" width="14" height="22" fill="${col}"/>
+              <text x="${W-padR+34}" y="${padT+135-g*24}" font-size="9.5"
+                fill="var(--ink2)">${Math.round(maxP*t)}%</text>`;
+      }
+      s += `</svg>`;
+      const el = document.getElementById("calendar");
+      el.innerHTML = s;
+      el.querySelectorAll("rect[data-r]").forEach(r => {
+        r.addEventListener("mouseenter", () =>
+          document.getElementById("calReadout").textContent = r.dataset.r);
+      });
+      el.addEventListener("mouseleave", () =>
+        document.getElementById("calReadout").textContent = "");
+    }
+
+    function renderAll() { syncYears(); syncBAs(); renderTiles(); renderBars(); renderCalendar(); }
+    renderAll();
   </script>
 </body>
 </html>
