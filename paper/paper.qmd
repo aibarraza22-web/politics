@@ -162,10 +162,17 @@ Image(filename=str(f3()))
 
 ### 3.4 Estimator C — documented anchors
 
-Hand-curated statements from IRPs, ACC/FERC filings, and investor materials,
-each with source URL and exact quote, kept in their native units. No real
-anchors are curated yet; demo mode injects synthetic ones (loudly labeled)
-derived from the fixture's truth to exercise the comparison machinery.
+Hand-curated statements from IRPs, ACC/FERC filings, studies, and investor
+materials, each with source URL and exact quote, kept in their native units.
+One strong real lead is already logged as a *candidate* (not yet a verified
+anchor): NREL/CP-6A20-74176 reports APS curtailed ≈17,100 MWh ≈ 2.9% of
+potential PV in 2018, entirely as economic response to WEIM negative
+pricing, peaking March–April — a level, mechanism, and seasonal shape our
+estimators can be checked against once its quote is verified at the source
+(`src/estimators/c_anchors/candidates.csv`). Unverified candidates are never
+loaded into figures; demo mode meanwhile injects synthetic anchors (loudly
+labeled) derived from the fixture's truth to exercise the comparison
+machinery.
 
 ### 3.5 Triangulation
 

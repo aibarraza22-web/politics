@@ -13,6 +13,7 @@ Status legend: `unverified` = not yet accessed from this codebase · `verified` 
 | oasis | CAISO OASIS | WEIM (EIM) locational prices at Arizona load-aggregation points; zero/negative-price hour analysis (Estimator B) | OASIS SingleZip API — **correct report name and AZ node naming must be investigated and documented here before building; do not trust the spec** | none | unverified | — | — |
 | irps | APS / TEP IRPs, ACC eDocket, FERC filings, investor materials | Any stated curtailment figures or assumptions (Estimator C anchors) | Manual curation → `src/estimators/c_anchors/anchors.csv`, every row with source URL + quote | none | unverified | — | — |
 | lit | LBNL 2024 data center energy report; EIA/LBNL curtailment literature (CAISO/ERCOT) | Methodological precedent + writeup context | Manual | none | unverified | — | — |
+| nrel74176 | NREL/CP-6A20-74176 (O'Shaughnessy, Cruce & Xu) + NREL Data Catalog submission 116 | Estimator C anchors: APS 2018 ≈ 17,100 MWh ≈ 2.9% of potential, economic-only via EIM negative pricing; companion 2018 curtailment-estimates dataset | PDF at docs.nrel.gov + data.nrel.gov | none | snippet-corroborated (see notes) | 2026-07-07 | — |
 
 ## Verification notes
 
@@ -28,4 +29,5 @@ Status legend: `unverified` = not yet accessed from this codebase · `verified` 
 3. **eia923** (`src/fleet/eia923.py`): confirm route `electricity/facility-fuel`, facet names (`state`, `fuel2002`), and that monthly `generation` is net MWh.
 4. **nsrdb**: not yet wired (demo weather stands in). Wire PSM v3 hourly at plant coordinates, cache per plant-year to parquet, respect rate limits.
 5. **oasis** (`src/estimators/b_eim_prices.py`): investigate the correct WEIM report (`PRC_INTVL_LMP` is a guess) and the Arizona LAP/node names; record findings here. SPEC.md explicitly says do not trust the spec on this.
-6. After each item: update the table above (status, dates) and re-run `make real && make test`.
+6. **nrel74176**: open https://docs.nrel.gov/docs/fy21osti/74176.pdf, verify the quotes in `src/estimators/c_anchors/candidates.csv` verbatim, promote verified rows into `anchors.csv`; download the companion dataset (https://data.nrel.gov/submissions/116) for possible additional Arizona anchors. (Found 2026-07-07 via web search — the only channel this environment had; two independent snippets agree on the APS 2018 figure, but wording is unverified.)
+7. After each item: update the table above (status, dates) and re-run `make real && make test`.

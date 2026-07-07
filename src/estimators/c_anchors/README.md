@@ -16,4 +16,17 @@ Rules (from SPEC.md §2):
 - If a source gives a projection/assumption rather than a measurement, say so
   in `notes`.
 
-Populated in Phase 3. The header-only CSV here fixes the schema.
+The header-only `anchors.csv` fixes the schema and holds only **verified**
+anchors (quote checked against the source document by a human).
+
+`candidates.csv` holds real leads found via web search whose quotes could
+not yet be verified verbatim (this build environment cannot fetch the source
+documents). Promotion path: open the source URL, confirm the exact quote and
+figure, move the row into `anchors.csv` with the verbatim quote and today's
+date. Candidates are **never** loaded by the pipeline (`load.py` reads
+`anchors.csv` only) — unverified numbers stay out of every figure.
+
+Best current lead: NREL/CP-6A20-74176 (O'Shaughnessy, Cruce & Xu) — APS 2018
+curtailment ≈ 17,100 MWh ≈ 2.9% of potential, described as entirely economic
+(EIM negative pricing), peaking March–April. Its companion dataset
+(data.nrel.gov/submissions/116) may yield more Arizona anchors.
