@@ -54,20 +54,21 @@ def build(figures_dir=None):
                 transform=ax.transAxes, ha="center", va="top", fontsize=7.5,
                 color="#8a1c1c",
             )
-        ax.errorbar(
-            yrs - 0.08,
-            ga["curt_mid_pct"],
-            yerr=[
-                ga["curt_mid_pct"] - ga["curt_lo_pct"],
-                ga["curt_hi_pct"] - ga["curt_mid_pct"],
-            ],
-            fmt="o",
-            color=SERIES[0],
-            markersize=5,
-            capsize=3,
-            linewidth=1.5,
-            label="A: potential gap (5–95%)",
-        )
+        if len(ga):
+            ax.errorbar(
+                yrs - 0.08,
+                ga["curt_mid_pct"],
+                yerr=[
+                    ga["curt_mid_pct"] - ga["curt_lo_pct"],
+                    ga["curt_hi_pct"] - ga["curt_mid_pct"],
+                ],
+                fmt="o",
+                color=SERIES[0],
+                markersize=5,
+                capsize=3,
+                linewidth=1.5,
+                label="A: potential gap (5–95%)",
+            )
         gb = b[b["ba_code"] == ba]
         ax.scatter(
             gb["year"] + 0.08,
@@ -108,7 +109,13 @@ def build(figures_dir=None):
         ax.set_xlim(yrs.min() - 0.6, yrs.max() + 0.6)
     np.atleast_1d(axes)[0].set_ylabel("Curtailment (% of available energy)", color=INK_2)
     np.atleast_1d(axes)[0].set_ylim(bottom=0)
-    handles, labels = np.atleast_1d(axes)[0].get_legend_handles_labels()
+    handles, labels = [], []
+    for ax in np.atleast_1d(axes):
+        h, l_ = ax.get_legend_handles_labels()
+        for hi, li in zip(h, l_, strict=True):
+            if li not in labels:
+                handles.append(hi)
+                labels.append(li)
     fig.legend(
         handles, labels, loc="lower center", ncol=4, frameon=False, fontsize=8,
         bbox_to_anchor=(0.5, -0.06),

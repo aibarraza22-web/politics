@@ -24,11 +24,14 @@ If A, B, and C disagree wildly, that is a publishable finding ("Arizona has no i
 - All scenario assumptions live in one visible table.
 - EIA-930 imputed hours are flagged upstream — exclude or handle explicitly, never silently ingest.
 
-## Current phase: Phases 0–5 built in DEMO MODE → live-data verification
+## Current phase: REAL-DATA mode live; NSRDB robustness re-run owed
 
-All five phases exist and run end to end (`make demo && make paper && make test`), but **on a synthetic validation fixture with injected ground-truth curtailment** — this build environment had no network route to EIA/NREL/CAISO, so every real-mode fetcher is `unverified-live`. The fixture is a recovery test (estimators must find the injected truth within their bands; A covers 8/9 BA-years), never a source of Arizona claims. Every figure carries a SYNTHETIC banner unless `pipeline_meta.mode = 'real'`.
+All fetchers are live-verified (see SOURCES.md for schema-drift war stories) and the pipeline runs on real 2022–2024 data. Key state to respect when working here:
 
-**Next milestone:** on a networked machine, work through the live-verification checklist in `SOURCES.md` (inspect raw responses, fix parsers, wire NSRDB, investigate OASIS report/node names), then `make real` and re-validate: reconciliation within tolerance, holdout MAE acceptable, triangulation figure regenerated with real divergence discussed — never averaged.
+- **AZPS is excluded from Estimator A by evidence**: its 930 solar fails fleet reconciliation (40–74% unattributable excess). `pipeline.reconciled_ba_codes()` is the gate; do not "fix" this by loosening the tolerance.
+- **Weather is Open-Meteo ERA5-blend, a documented NSRDB stand-in** (`developer.nrel.gov` unreachable from this environment — gateway rejects all *.nrel.gov). A's wide real-data bands are dominated by this. First task on an environment that can reach NREL: pull NSRDB via `fetch_nsrdb_psm3`, rebuild, and report the sensitivity.
+- OASIS Arizona ELAP prices exist only from 2023-04; Estimator B covers Apr-2023+.
+- The demo fixture (`make demo`) stays as the regression harness for the estimator machinery; never present its outputs as Arizona results.
 
 ## Working conventions
 
