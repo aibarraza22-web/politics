@@ -46,19 +46,26 @@ EIM_DATA_START = "2023-04-01"  # bisected live; nothing published before this
 _CHUNK_DAYS = 7  # span limit probed live
 
 
-def _fetch_chunk(node: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
-    """One node-chunk (<= 7 days) of 5-min RTM LMPs, cached to parquet."""
-    tag = f"{node}_{start:%Y%m%d}_{end:%Y%m%d}"
-    cache = RAW_DIR / "oasis" / f"{tag}.parquet"
-    if cache.exists():
-        return pd.read_parquet(cache)
+def _node_cache(node: str, start: pd.Timestamp, end: pd.Timestamp):
+    return RAW_DIR / "oasis" / f"{node}_{start:%Y%m%d}_{end:%Y%m%d}.parquet"
+
+
+def _fetch_chunk_all_nodes(start: pd.Timestamp, end: pd.Timestamp) -> None:
+    """One <=7-day chunk of 5-min RTM LMPs for ALL three AZ ELAPs in a single
+    request (OASIS accepts comma-separated node lists — one round trip
+    instead of three; OASIS responses run tens of seconds each). Results are
+    split into per-node parquet caches."""
+    nodes = list(EIM_NODES.values())
+    missing = [n for n in nodes if not _node_cache(n, start, end).exists()]
+    if not missing:
+        return
     params = {
         "queryname": OASIS_QUERY,
         "startdatetime": start.strftime("%Y%m%dT00:00-0000"),
         "enddatetime": end.strftime("%Y%m%dT00:00-0000"),
         "version": "1",
         "market_run_id": "RTM",
-        "node": node,
+        "node": ",".join(nodes),
         "resultformat": "6",
     }
     import requests
@@ -72,20 +79,24 @@ def _fetch_chunk(node: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFr
         zf = zipfile.ZipFile(io.BytesIO(resp.content))
         member = zf.namelist()[0]
         if member.endswith(".xml"):  # OASIS error payload
-            raise RuntimeError(f"OASIS error for {tag}: {member}")
+            raise RuntimeError(f"OASIS error for {start:%Y%m%d}: {member}")
         df = pd.read_csv(zf.open(member))
-        df = df[df["LMP_TYPE"] == "LMP"][["INTERVALSTARTTIME_GMT", "MW"]]
-        out = pd.DataFrame(
-            {
-                "ts5_utc": pd.to_datetime(df["INTERVALSTARTTIME_GMT"]).dt.tz_localize(None),
-                "lmp_usd_mwh": pd.to_numeric(df["MW"], errors="coerce"),
-            }
-        )
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        out.to_parquet(cache, index=False)
+        df = df[df["LMP_TYPE"] == "LMP"]
+        for node, g in df.groupby("NODE"):
+            out = pd.DataFrame(
+                {
+                    "ts5_utc": pd.to_datetime(
+                        g["INTERVALSTARTTIME_GMT"]
+                    ).dt.tz_localize(None),
+                    "lmp_usd_mwh": pd.to_numeric(g["MW"], errors="coerce"),
+                }
+            ).sort_values("ts5_utc")
+            cache = _node_cache(str(node), start, end)
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            out.to_parquet(cache, index=False)
         time.sleep(_SLEEP_S)
-        return out
-    raise RuntimeError(f"OASIS kept rate-limiting {tag}")
+        return
+    raise RuntimeError(f"OASIS kept rate-limiting chunk {start:%Y%m%d}")
 
 
 def fetch_eim_prices(start: str = EIM_DATA_START, end: str = "2024-12-31") -> pd.DataFrame:
@@ -95,9 +106,10 @@ def fetch_eim_prices(start: str = EIM_DATA_START, end: str = "2024-12-31") -> pd
     if edges[-1] < pd.Timestamp(end) + pd.Timedelta(days=1):
         edges = edges.append(pd.DatetimeIndex([pd.Timestamp(end) + pd.Timedelta(days=1)]))
     frames = []
-    for ba, node in EIM_NODES.items():
-        for s, e in zip(edges[:-1], edges[1:], strict=False):
-            five_min = _fetch_chunk(node, s, e)
+    for s, e in zip(edges[:-1], edges[1:], strict=False):
+        _fetch_chunk_all_nodes(s, e)
+        for ba, node in EIM_NODES.items():
+            five_min = pd.read_parquet(_node_cache(node, s, e))
             hourly = (
                 five_min.set_index("ts5_utc")
                 .resample("1h")["lmp_usd_mwh"]
