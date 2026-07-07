@@ -36,9 +36,20 @@ DAYLIGHT_FRAC_OF_PEAK = 0.05  # hour counts as daylight if potential > 5% of BA 
 
 
 def run() -> pd.DataFrame:
+    from src.pipeline import reconciled_ba_codes
+
+    ok_bas = reconciled_ba_codes()
     with connect(read_only=True) as con:
         df = con.execute("SELECT * FROM potential_ba_hour").df()
         quants = con.execute("SELECT * FROM residual_quantiles").df()
+
+    dropped = sorted(set(df["ba_code"]) - set(ok_bas))
+    if dropped:
+        print(
+            f"estimator A: excluding {dropped} — 930 solar not attributable to "
+            "the modeled fleet (failed reconciliation; see pipeline.reconciled_ba_codes)"
+        )
+    df = df[df["ba_code"].isin(ok_bas)]
 
     q = quants.pivot(index="ba_code", columns="quantile", values="rel_residual")
     df = df.merge(q, left_on="ba_code", right_index=True)

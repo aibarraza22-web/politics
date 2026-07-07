@@ -143,7 +143,9 @@ def persist_assumptions() -> None:
         {"parameter": "flexibility_floors", "value": "0.0 / 0.5 / 1.0 of full load"},
         {"parameter": "sla_levels", "value": str(SLA_LEVELS)},
         {"parameter": "battery_options", "value": "none; 4h at IT/2 power"},
-        {"parameter": "surplus_source", "value": "Estimator A hourly, statewide, band as labeled"},
+        {"parameter": "surplus_source",
+         "value": "Estimator A hourly, summed over BAs where A is defensible "
+                  "(BAs failing 930-vs-923 reconciliation excluded), band as labeled"},
     ]
     write_table(pd.DataFrame(rows), "scenario_assumptions")
 

@@ -86,6 +86,22 @@ def pipeline_mode() -> str:
         return "unbuilt"
 
 
+def reconciled_ba_codes() -> list[str]:
+    """BAs whose 930 solar is attributable to the modeled fleet (every year
+    within tolerance). Estimator A is only defensible for these.
+
+    Real-data finding (2026-07-07): AZPS fails — its 930 solar exceeds the
+    sum of ALL attributable utility-scale plant generation by 40-74%
+    (growing yearly), unexplained by CISO/WALC plant reattribution (NNLS
+    over monthly profiles yields nonphysical weights). Pattern is consistent
+    with AZPS reporting estimated distributed/small-scale solar in 930.
+    SRP and TEPC reconcile within 3-8%.
+    """
+    rec = read_table("reconciliation")
+    ok = rec.groupby("ba_code")["within_tolerance"].all()
+    return sorted(ok[ok].index)
+
+
 def reconcile_930_vs_plant_sums() -> pd.DataFrame:
     """Fleet-vs-930 acceptance check (Phase 1).
 

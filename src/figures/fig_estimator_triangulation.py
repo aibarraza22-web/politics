@@ -40,12 +40,20 @@ def build(figures_dir=None):
                 """
             ).df()
 
-    bas = sorted(a["ba_code"].unique())
+    bas = sorted(set(a["ba_code"]) | set(b["ba_code"]))
+    all_years = np.array(sorted(set(a["year"].astype(int)) | set(b["year"].astype(int))))
     fig, axes = plt.subplots(1, len(bas), figsize=(10.5, 3.9), dpi=200, sharey=True)
     for ax, ba in zip(np.atleast_1d(axes), bas, strict=True):
         style_axes(ax)
         ga = a[a["ba_code"] == ba]
-        yrs = ga["year"].to_numpy()
+        yrs = ga["year"].to_numpy() if len(ga) else all_years
+        if not len(ga):
+            ax.text(
+                0.5, 0.94,
+                "A: n/a — 930 series not\nattributable to modeled fleet",
+                transform=ax.transAxes, ha="center", va="top", fontsize=7.5,
+                color="#8a1c1c",
+            )
         ax.errorbar(
             yrs - 0.08,
             ga["curt_mid_pct"],

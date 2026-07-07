@@ -171,6 +171,14 @@ def run() -> pd.DataFrame:
     annual["upper_bound_pct"] = (
         100 * annual["upper_bound_mwh"] / (annual["actual_mwh"] + annual["upper_bound_mwh"])
     )
+    # The hours-based signal is price-only and valid for every BA; the ENERGY
+    # bound divides by the 930 actual, which is only meaningful where the 930
+    # series reconciles with the modeled fleet (not AZPS — see pipeline).
+    from src.pipeline import pipeline_mode, reconciled_ba_codes
+
+    if pipeline_mode() == "real":
+        bad = ~annual["ba_code"].isin(reconciled_ba_codes())
+        annual.loc[bad, ["upper_bound_mwh", "upper_bound_pct"]] = float("nan")
     write_table(annual, "estimator_b_annual")
     return annual
 

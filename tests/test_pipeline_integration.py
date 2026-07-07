@@ -30,10 +30,20 @@ def test_mode_is_labeled():
     assert mode in ("demo", "real")
 
 
-def test_reconciliation_within_tolerance():
-    rec = con().execute("SELECT * FROM reconciliation").df()
+def test_reconciliation_gates_estimator_a():
+    """Every BA-year Estimator A reports must come from a BA whose 930 series
+    reconciles with the modeled fleet. (On real data AZPS fails
+    reconciliation — its 930 solar exceeds all attributable plant generation
+    — and must therefore be absent from A.)"""
+    c = con()
+    rec = c.execute("SELECT * FROM reconciliation").df()
     assert len(rec) > 0
-    assert rec["within_tolerance"].all()
+    ok = set(rec.groupby("ba_code")["within_tolerance"].all().loc[lambda s: s].index)
+    a_bas = set(c.execute("SELECT DISTINCT ba_code FROM estimator_a_annual").df()["ba_code"])
+    assert a_bas <= ok, f"estimator A covers unreconciled BAs: {a_bas - ok}"
+    mode = c.execute("SELECT mode FROM pipeline_meta").fetchone()[0]
+    if mode == "demo":
+        assert rec["within_tolerance"].all()
 
 
 def test_estimator_a_band_contains_injected_truth():

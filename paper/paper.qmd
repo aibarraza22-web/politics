@@ -52,7 +52,9 @@ if MODE == "real":
         "per-plant calibration absorbs its level bias and the residual bands "
         "carry the rest, but the NSRDB sensitivity check is still owed. "
         "(2) OASIS publishes Arizona EIM LAP prices only from April 2023, "
-        "so Estimator B covers Apr-2023 onward.\n"
+        "so Estimator B covers Apr-2023 onward. (3) AZPS failed the fleet "
+        "reconciliation check — see §3.6 — so Estimator A covers SRP and "
+        "TEPC only.\n"
         ":::"
     )
 else:
@@ -196,7 +198,50 @@ real-world performance — real weather error is likely worse than the
 synthetic kind — but it establishes that the machinery recovers curtailment
 it has never seen. Run `make demo && make test` to reproduce.
 
-### 3.6 Triangulation
+### 3.6 A finding before any estimate: AZPS's solar series cannot be attributed
+
+The pipeline's first acceptance gate — annual BA solar energy from the
+hourly series must reconcile with summed per-plant monthly generation —
+produced a real finding on live data:
+
+```{python}
+#| echo: false
+#| label: tbl-reconciliation
+#| tbl-cap: "930-vs-923 reconciliation per BA-year (tolerance ±10%). table_id: reconciliation"
+r = q("""SELECT ba_code AS BA, CAST(year AS INT) AS year,
+                ROUND(mwh_930/1000, 1)        AS "930 (GWh)",
+                ROUND(mwh_923_scaled/1000, 1) AS "923 fleet (GWh)",
+                ROUND(100*rel_gap, 1)         AS "gap (%)",
+                within_tolerance
+         FROM reconciliation ORDER BY 1, 2""")
+Markdown(r.to_markdown(index=False))
+```
+
+```{python}
+#| echo: false
+#| output: asis
+if MODE == "real":
+    print(
+        "SRP and TEPC reconcile within a few percent. **AZPS does not**: its "
+        "reported hourly solar exceeds the summed generation of every "
+        "utility-scale PV plant attributable to it by 40–74%, growing year "
+        "over year, and its 2024 series implies a fleet capacity factor "
+        "(~37%) that is physically impossible for its 919 MW of nameplate. "
+        "Reattributing Arizona plants that EIA-860 assigns to CISO or WALC "
+        "does not close the gap: a non-negative least-squares fit of the "
+        "monthly gap onto candidate plant profiles yields non-physical "
+        "weights (small plants at 4–6×). The pattern — a smoothly growing "
+        "residual roughly tracking distributed-solar adoption — is most "
+        "consistent with AZPS folding estimated small-scale/distributed "
+        "solar into its EIA-930 fuel-level reporting. Until that reporting "
+        "basis is resolved with APS/EIA, **no potential-gap estimate for "
+        "AZPS is defensible**, and we publish none. This is itself a form "
+        "of the paper's thesis: Arizona's largest BA publishes a solar "
+        "series that cannot currently be tied to its utility-scale fleet."
+    )
+```
+
+### 3.7 Triangulation
 
 ```{python}
 #| echo: false
@@ -342,8 +387,16 @@ real results were inspected.
 8. **Weather source substitution.** Plant-level irradiance is Open-Meteo
    ERA5-blend, not NSRDB. Calibration absorbs mean bias, but correlated
    weather error (e.g. monsoon cloud timing) can masquerade as curtailment
-   or hide it. The NSRDB re-run is the single most important robustness
-   check owed.
+   or hide it. On real data this shows up directly: Estimator A's residual
+   bands are several times wider than in the validation fixture, its annual
+   medians are mostly indistinguishable from zero, and its upper bounds are
+   loose. The NSRDB re-run is the single most important robustness check
+   owed — until then, A should be read as a bound, and Estimator B as the
+   sharper (economic-only) signal.
+9. **AZPS is excluded from A by evidence, not choice.** Its 930 solar
+   series cannot be attributed to its utility-scale fleet (§3.6). Any
+   statewide surplus number from this paper therefore covers SRP + TEPC
+   only and understates the state total.
 
 ## 6. Replication
 
