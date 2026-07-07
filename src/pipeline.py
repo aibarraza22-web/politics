@@ -69,7 +69,19 @@ def build_real(start: str = "2022-01-01", end: str = "2024-12-31", fleet_year: i
           f"(suspect alone: {int(suspect.sum())})")
 
     write_table(fetch_monthly_plant_gen(start[:7], end[:7]), "monthly_plant_gen")
-    write_table(fetch_fleet_weather(fleet, start, end), "weather_obs")
+    # Weather: NSRDB (via the AWS S3 mirror) is primary; Open-Meteo ERA5 is
+    # the documented fallback when S3 is unreachable.
+    try:
+        from src.potential.nsrdb_s3 import fetch_fleet_weather_nsrdb
+
+        weather = fetch_fleet_weather_nsrdb(fleet, years)
+        weather_source = "nsrdb-s3-aggregated-v4"
+    except Exception as e:
+        print(f"NSRDB S3 unavailable ({e}); falling back to Open-Meteo ERA5")
+        weather = fetch_fleet_weather(fleet, start, end)
+        weather_source = "open-meteo-era5"
+    write_table(weather, "weather_obs")
+    write_table(pd.DataFrame([{"weather_source": weather_source}]), "weather_meta")
     write_table(fetch_eim_prices(), "eim_prices")
     write_table(
         pd.DataFrame(

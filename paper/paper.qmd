@@ -270,6 +270,25 @@ Markdown(a.to_markdown(index=False))
 ```{python}
 #| echo: false
 #| output: asis
+def table_exists(name):
+    with connect(read_only=True) as con:
+        return name in {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+
+if MODE == "real" and table_exists("estimator_a_annual_era5"):
+    sens = q("""
+        SELECT n.ba_code AS BA, CAST(n.year AS INT) AS year,
+               ROUND(e.curt_lo_pct,1) AS era5_lo, ROUND(e.curt_hi_pct,1) AS era5_hi,
+               ROUND(n.curt_lo_pct,1) AS nsrdb_lo, ROUND(n.curt_hi_pct,1) AS nsrdb_hi
+        FROM estimator_a_annual n JOIN estimator_a_annual_era5 e USING (ba_code, year)
+        ORDER BY 1, 2""")
+    print(
+        "**Weather-source sensitivity (the pre-registered check).** The same "
+        "pipeline run with ERA5-blend weather vs. NSRDB satellite weather "
+        "gives these 5–95% bands (percent of available energy):\n\n"
+        + sens.to_markdown(index=False)
+        + "\n\n(table_id: estimator_a_annual vs estimator_a_annual_era5.)"
+    )
+
 if MODE == "demo":
     cov = q("""
         WITH truth AS (
