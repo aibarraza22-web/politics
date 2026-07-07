@@ -105,9 +105,17 @@ def fetch_eim_prices(start: str = EIM_DATA_START, end: str = "2024-12-31") -> pd
                           freq=f"{_CHUNK_DAYS}D")
     if edges[-1] < pd.Timestamp(end) + pd.Timedelta(days=1):
         edges = edges.append(pd.DatetimeIndex([pd.Timestamp(end) + pd.Timedelta(days=1)]))
+    from concurrent.futures import ThreadPoolExecutor
+
+    chunks = list(zip(edges[:-1], edges[1:], strict=False))
+    # OASIS responses take tens of seconds server-side; a few parallel
+    # workers cut wall time without hammering the rate limit (429s still
+    # back off per worker).
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        list(pool.map(lambda c: _fetch_chunk_all_nodes(*c), chunks))
+
     frames = []
-    for s, e in zip(edges[:-1], edges[1:], strict=False):
-        _fetch_chunk_all_nodes(s, e)
+    for s, e in chunks:
         for ba, node in EIM_NODES.items():
             five_min = pd.read_parquet(_node_cache(node, s, e))
             hourly = (
